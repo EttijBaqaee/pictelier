@@ -1,4 +1,4 @@
-# 绘坊 · Pictelier · 0.3.66.9
+# 绘坊 · Pictelier · 0.3.66.10
 
 [![简体中文](https://img.shields.io/badge/简体中文-当前页面-blue)](README.md) [![English](https://img.shields.io/badge/English-Readme-lightgrey)](README.en.md)
 
@@ -13,11 +13,20 @@
 
 **快速导航**
 
-- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-9)
+- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-10) · [AI 脚本使用指南](agent.md)
 - **部署**：[Docker](#section-2) · [1Panel](#section-5) · [离线镜像](#section-10)
 - **配置**：[编排文件](#section-3) · [环境变量](#section-4) · [端口与路径](#section-7) · [Nginx 反代](#section-8)
 - **维护**：[更新与备份](#section-11) · [常见问题](#section-12)
 - **项目条款**：[开源许可](#section-13) · [隐私政策](#section-14) · [免责声明](#section-15)
+
+<a id="release-0-3-66-10"></a>
+
+## 0.3.66.10 更新说明
+
+- **数据目录权限**：容器启动时自动准备专用数据目录及已有数据库、媒体和备份的写权限，随后以 UID/GID 1000 运行应用；只读挂载会给出明确提示。编排默认使用项目目录内的 `./docker-data`。
+- **大图预览翻页**：打开大图后，可在当前图库页的任务及多张输出之间切换。半透明按钮固定在窗口左右居中位置，图片为按钮留出空间；切换后任务提示词同步更新，关闭大图时保留当前选中的图片。
+- **页面缓存**：修复 Service Worker 在页面响应开始读取后再次复制响应的时序错误，避免 Firefox 中的相关缓存异常；缓存写入失败不影响在线页面返回。
+- **AI 脚本指南**：新增 [agent.md](agent.md)，说明如何使用用户提供的使用码操作网页、上传参考图和读取结果。推荐为 AI 设置使用码限额；多个 API 配置时先询问用户，额度用尽但目标未完成时主动暂停并询问用户。
 
 <a id="release-0-3-66-9"></a>
 
@@ -80,35 +89,30 @@
 服务器只需 Docker Engine 和 Docker Compose v2，可直接拉取绘坊的镜像，无需安装 Node.js 或在宿主机编译：
 
 ```bash
-docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.9
+docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.10
 # 跟随绘坊的最新发布版本
 docker pull ghcr.io/ettijbaqaee/pictelier:latest
 ```
 
-正式部署建议固定 `0.3.66.9`。本次发布镜像为 **Linux amd64**，容器使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
+正式部署建议固定 `0.3.66.10`。本次发布镜像为 **Linux amd64**，应用使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
 
-### 首次创建持久化目录
+### 持久化数据目录
 
-以下命令由 root 执行，为新部署创建数据目录：
+默认使用编排项目目录下的 `./docker-data`；在 1Panel 的 `pictelier` 编排中，通常对应 `/opt/1panel/docker/compose/pictelier/docker-data`。也可通过 `APP_DATA_DIR` 指定专用数据目录的绝对路径。
 
-```bash
-mkdir -p /opt/pictelier-data
-chown 1000:1000 /opt/pictelier-data
-```
-
-数据目录必须让 UID/GID 1000 可写。使用已有目录时，检查目录内数据库和媒体文件的权限，排障步骤见第 10 节。
+容器启动时准备数据目录及已有文件的 UID/GID 1000 写权限，再以该用户运行应用，无需手动执行 `chown`。请将该目录专用于绘坊；不要挂载系统目录或其他应用的数据。只读挂载、只读文件系统及存储端禁止修改属主等情况仍需在宿主机处理，详见第 10 节。
 
 ### 可选：获取源码并在 Docker 内构建
 
 只有需要自行构建时才需要 Git，以及访问基础镜像、npm 和 Debian 软件源：
 
 ```bash
-git clone --branch v0.3.66.9 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
+git clone --branch v0.3.66.10 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
 cd /opt/pictelier/deploy
 cp .env.example .env
 ```
 
-也可以从 [0.3.66.9 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.9) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
+也可以从 [0.3.66.10 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.10) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
 
 标准源码构建使用 `deploy/Dockerfile`，依赖安装、前端编译和后端编译都在 Docker 内完成。`deploy/Dockerfile.1panel` 是已有 Linux 锁定依赖缓存环境的构建文件，不能直接用于没有 `node_modules` 的干净源码；首次部署请使用标准 `deploy/Dockerfile`。
 
@@ -129,7 +133,7 @@ name: pictelier # 可选：编排项目名；同一服务器部署多套时使�
 services:
   app:
     # 镜像：推荐固定此版本；可按需改为绘坊的其他已发布标签。
-    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.9
+    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.10
     # 可选：本机没有镜像时才拉取；升级时主动执行 docker compose pull app。
     pull_policy: if_not_present
     container_name: pictelier # 可选：容器名；部署多套时必须各不相同。
@@ -187,15 +191,21 @@ services:
       # 可选：Codex CLI 兼容开关，默认 false；仅对应供应商要求时设为 true。
       UPSTREAM_CODEX_CLI: "${UPSTREAM_CODEX_CLI:-false}"
     volumes:
-      # APP_DATA_DIR 可选，默认 ../docker-data（相对编排文件目录）；1Panel 推荐填写绝对路径。
-      # 左侧为宿主机持久化目录，需让 UID/GID 1000 可写；右侧保持 /app/data。
+      # APP_DATA_DIR 可选，默认 ./docker-data（编排项目目录内）；也可填写绝对路径。
+      # 左侧为宿主机专用数据目录，启动时自动准备 UID/GID 1000 写权限；右侧保持 /app/data。
       # 升级必须继续使用原数据目录，避免进入空数据库。
-      - "${APP_DATA_DIR:-../docker-data}:/app/data"
-    # 可选安全设置，建议保留：禁止提权并移除额外 Linux capabilities。
+      - "${APP_DATA_DIR:-./docker-data}:/app/data"
+    # 启动阶段准备数据目录权限，随后以 UID/GID 1000 运行应用。
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     mem_limit: 1536m # 可选：容器内存上限，可按服务器资源调整。
     pids_limit: 128 # 可选：容器进程数上限。
     # 可选健康检查，建议保留：自动读取 HEALTH_BASE_PATH，修改前缀无需修改脚本。
@@ -295,10 +305,10 @@ location ^~ /r/references/ {
 
 ## 4. 在 1Panel 中部署
 
-1. 按第 1 节创建持久化目录并设置 UID/GID 1000 写入权限。
+1. 确定专用持久化目录；留空 `APP_DATA_DIR` 时使用编排项目内的 `./docker-data`，首次启动会自动创建并准备写权限。
 2. 进入 **容器 → 编排 → 创建编排**，选择编辑编排，名称填写 `pictelier`。
-3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.9`。
-4. 在编排环境变量中填写第 3 节参数，替换 `APP_SECRET` 和 `ADMIN_PASSWORD`，`APP_DATA_DIR` 使用绝对路径。六项路径按第 6 节分别填写或留空。
+3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.10`。
+4. 在编排环境变量中填写第 3 节参数，替换 `APP_SECRET` 和 `ADMIN_PASSWORD`。`APP_DATA_DIR` 可留空使用项目内默认目录，也可填写实际数据目录的绝对路径。六项路径按第 6 节分别填写或留空。
 5. 创建并启动，面板会拉取镜像并创建容器，不需要下载源码或现场编译。
 6. 容器健康状态变为 `healthy` 后，按 `APP_PORT` 和 `APP_BASE_PATH` 访问。推荐再按第 7 节配置 Nginx/HTTPS。
 
@@ -307,7 +317,7 @@ location ^~ /r/references/ {
 下载源码到服务器（例如 `/opt/pictelier`），在环境变量中设置 `APP_SOURCE_DIR=/opt/pictelier`，并把主编排中的 `image` / `pull_policy` 改为下面内容，同时加入 `build`：
 
 ```yaml
-image: pictelier:0.3.66.9
+image: pictelier:0.3.66.10
 pull_policy: never
 build:
   context: ${APP_SOURCE_DIR}
@@ -344,7 +354,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml build app
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
-该模式使用本地镜像名 `pictelier:0.3.66.9`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
+该模式使用本地镜像名 `pictelier:0.3.66.10`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
 
 <a id="section-7"></a>
 
@@ -695,17 +705,17 @@ nginx -t && nginx -s reload
 
 ## 9. 离线镜像（可选）
 
-Release 中的 `pictelier-0.3.66.9-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
+Release 中的 `pictelier-0.3.66.10-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
-docker load -i pictelier-0.3.66.9-amd64.tar.gz
+docker load -i pictelier-0.3.66.10-amd64.tar.gz
 ```
 
 使用离线镜像时，将主编排的 `image` 和 `pull_policy` 改为下面内容；如果之前添加过 `build`，同时删除整个 `build` 块：
 
 ```yaml
-image: pictelier:0.3.66.9
+image: pictelier:0.3.66.10
 pull_policy: never
 ```
 
@@ -721,29 +731,16 @@ pull_policy: never
 
 ### 数据目录写权限
 
-容器以 UID/GID 1000 运行。SQLite 数据库、`app.db-wal`、`app.db-shm` 和媒体目录都需要该用户的写权限；只修改最外层目录不够。镜像内设置的权限不会覆盖宿主机挂载目录的权限。
+容器入口先准备专用数据目录的属主和属主读写权限，再降为 UID/GID 1000 启动应用，包括 SQLite 数据库、`app.db-wal`、`app.db-shm`、媒体和备份文件。该过程不改写文件内容，不跟随符号链接，也不跨文件系统遍历。首次部署保留模板中的入口、安全设置及 `cap_add` 即可，无需手动修改权限。
 
-出现 `SQLITE_READONLY` 或 `EACCES` 时，先在 1Panel 确认 `/app/data` 挂载为读写，并核对实际宿主机路径。停止应用并备份整个数据目录后，在实际编排目录以 root 执行：
-
-```bash
-set -e
-docker compose stop app
-docker compose run --rm --no-deps --user 0:0 \
-  --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
-  --entrypoint sh app -eu -c \
-  'chown -Rh 1000:1000 /app/data && chmod -R u+rwX /app/data'
-docker compose up -d app
-docker compose logs --tail=50 app
-```
-
-`app` 是模板中的服务名。一次性容器使用该服务的数据挂载，仅调整属主及属主读写权限。若编排使用多个 `-f` 文件，所有命令都需带相同的文件组合。若挂载显示只读，应先改为读写；文件系统本身只读时，应先处理宿主机存储问题。
+出现 `SQLITE_READONLY` 或 `EACCES` 时，先在 1Panel 确认 `/app/data` 挂载为读写，并核对实际宿主机路径。只读文件系统需先恢复可写；NFS 等存储若禁止容器修改属主，应由存储管理员将专用目录及文件准备为 UID/GID 1000 可读写，再以 `user: "1000:1000"` 运行。显式设置非 root 用户会跳过自动权限修复。数据目录应直接挂载真实目录，目录内指向外部的符号链接不会被修复。
 
 - GHCR 镜像升级：修改 `image` 中的版本标签，执行 `docker compose pull app`，再执行 `docker compose up -d`；1Panel 等价操作为拉取镜像并重新部署编排。
 - 源码构建升级：更新源码后，使用第 5 节相同的两个 `-f` 文件重新构建并启动。
 - 离线镜像升级：导入新镜像，修改 `image` 标签后重新部署。
 - 只改环境变量：重新创建容器，不需要重新构建镜像。
 - 继续使用相同的 `APP_SECRET`、管理员密码和数据挂载；不要删除数据卷或对旧部署执行 `down -v`。
-- GHCR 和离线镜像均使用 UID/GID 1000。若挂载目录不可写，按上述步骤修正数据目录权限。
+- GHCR 和离线镜像中的应用均使用 UID/GID 1000；启动阶段自动准备专用数据目录的写权限。
 
 <a id="section-12"></a>
 

@@ -43,6 +43,7 @@ export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
   const detailTaskId = useStore((s) => s.detailTaskId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
+  const lightboxImageId = useStore((s) => s.lightboxImageId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
@@ -81,6 +82,13 @@ export default function DetailModal() {
   useEffect(() => {
     setImageIndex(0)
   }, [detailTaskId])
+
+  // Returning from the large preview keeps the matching task output selected.
+  useEffect(() => {
+    if (!lightboxImageId || !task) return
+    const index = task.outputImages.indexOf(lightboxImageId)
+    if (index >= 0) setImageIndex(index)
+  }, [lightboxImageId, task])
 
   useEffect(() => {
     if (task?.status !== 'running') return
@@ -436,7 +444,9 @@ export default function DetailModal() {
                     onImageIndexChange={setImageIndex}
                     isTaskBlurred={isTaskBlurred}
                     onActiveImageReady={handleActiveImageReady}
-                    onOpenLightbox={(imageId) => setLightboxImageId(imageId, task.outputImages)}
+                    onOpenLightbox={(imageId) => setLightboxImageId(imageId, [...new Set(tasks
+                      .filter((item) => item.taskType !== 'video')
+                      .flatMap((item) => item.outputImages))])}
                   />
                 </div>
               )}

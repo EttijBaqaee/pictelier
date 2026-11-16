@@ -38,7 +38,7 @@ ENV WEB_DIST_DIR=/app/dist
 ENV MALLOC_ARENA_MAX=2
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg \
+  && apt-get install -y --no-install-recommends ffmpeg util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=server-prod-deps /app/server/node_modules /app/server/node_modules
@@ -46,14 +46,14 @@ COPY --from=server-build /app/server/dist /app/server/dist
 COPY --from=server-build /app/server/package.json /app/server/package.json
 COPY --from=web-build /app/dist /app/dist
 COPY LICENSE NOTICE /app/
-LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.9" org.opencontainers.image.licenses="AGPL-3.0-only"
+LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.10" org.opencontainers.image.licenses="AGPL-3.0-only"
 
 RUN mkdir -p /app/data && chown node:node /app/data
-
-USER node
+COPY --chmod=755 deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 VOLUME ["/app/data"]
 EXPOSE 8787
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "/app/server/dist/index.js"]
 

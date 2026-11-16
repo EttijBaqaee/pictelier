@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: gpt-image-playground
+    name: pictelier
     runtime: docker
     plan: free
     dockerfilePath: ./deploy/Dockerfile
@@ -9,7 +9,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: PORT
-        value: "10000"
+        value: "8787"
       - key: HOST
         value: 0.0.0.0
       - key: DATA_DIR

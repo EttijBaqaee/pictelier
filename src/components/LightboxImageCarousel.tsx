@@ -20,6 +20,7 @@ interface LightboxSlideProps {
   imageIndex: number
   imageTotal: number
   maskPreviewSrc?: string
+  reserveNavigationSpace: boolean
 }
 
 function LightboxSlide({
@@ -28,6 +29,7 @@ function LightboxSlide({
   imageIndex,
   imageTotal,
   maskPreviewSrc,
+  reserveNavigationSpace,
 }: LightboxSlideProps) {
   const tasks = useStore((s) => s.tasks)
   const matchedTask = tasks.find((item) =>
@@ -54,7 +56,13 @@ function LightboxSlide({
   const showOverlay = isActive && (showLoadingOverlay || (!displaySrc && isLoading))
 
   return (
-    <div className="relative flex h-full w-full flex-shrink-0 items-center justify-center px-2 sm:px-4">
+    <div
+      className="relative flex h-full w-full flex-shrink-0 items-center justify-center px-2 sm:px-4"
+      style={reserveNavigationSpace ? {
+        paddingLeft: 'calc(4rem + env(safe-area-inset-left, 0px))',
+        paddingRight: 'calc(4rem + env(safe-area-inset-right, 0px))',
+      } : undefined}
+    >
       {showOverlay && (
         <ImageLoadingOverlay
           progress={progress}
@@ -430,13 +438,16 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
                 willChange: index === visualIndex ? 'transform' : undefined,
               }}
             >
-              <LightboxSlide
-                imageId={imageId}
-                isActive={index === visualIndex}
-                imageIndex={index + 1}
-                imageTotal={imageTotal}
-                maskPreviewSrc={index === visualIndex ? maskPreviewSrc : undefined}
-              />
+              {(Math.abs(index - visualIndex) <= 1 || Math.abs(index - currentIndex) <= 1) && (
+                <LightboxSlide
+                  imageId={imageId}
+                  isActive={index === visualIndex}
+                  imageIndex={index + 1}
+                  imageTotal={imageTotal}
+                  maskPreviewSrc={index === visualIndex ? maskPreviewSrc : undefined}
+                  reserveNavigationSpace={showTrack}
+                />
+              )}
             </div>
           </div>
         ))}

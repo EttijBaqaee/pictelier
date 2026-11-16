@@ -6,7 +6,7 @@ name: pictelier # 可选：编排项目名；同一服务器部署多套时使�
 services:
   app:
     # 镜像：推荐固定此版本；可按需改为绘坊的其他已发布标签。
-    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.9
+    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.10
     # 可选：本机没有镜像时才拉取；升级时主动执行 docker compose pull app。
     pull_policy: if_not_present
     container_name: pictelier # 可选：容器名；部署多套时必须各不相同。
@@ -64,15 +64,21 @@ services:
       # 可选：Codex CLI 兼容开关，默认 false；仅对应供应商要求时设为 true。
       UPSTREAM_CODEX_CLI: "${UPSTREAM_CODEX_CLI:-false}"
     volumes:
-      # APP_DATA_DIR 可选，默认 ../docker-data（相对编排文件目录）；1Panel 推荐填写绝对路径。
-      # 左侧为宿主机持久化目录，需让 UID/GID 1000 可写；右侧保持 /app/data。
+      # APP_DATA_DIR 可选，默认 ./docker-data（编排项目目录内）；也可填写绝对路径。
+      # 左侧为宿主机专用数据目录，启动时自动准备 UID/GID 1000 写权限；右侧保持 /app/data。
       # 升级必须继续使用原数据目录，避免进入空数据库。
-      - "${APP_DATA_DIR:-../docker-data}:/app/data"
-    # 可选安全设置，建议保留：禁止提权并移除额外 Linux capabilities。
+      - "${APP_DATA_DIR:-./docker-data}:/app/data"
+    # 启动阶段准备数据目录权限，随后以 UID/GID 1000 运行应用。
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     mem_limit: 1536m # 可选：容器内存上限，可按服务器资源调整。
     pids_limit: 128 # 可选：容器进程数上限。
     # 可选健康检查，建议保留：自动读取 HEALTH_BASE_PATH，修改前缀无需修改脚本。

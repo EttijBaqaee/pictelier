@@ -5,3 +5,4 @@
 **/playwright-report/** export-ignore
 scripts/verify* export-ignore
 vitest.config.* export-ignore
+deploy/*.sh text eol=lf

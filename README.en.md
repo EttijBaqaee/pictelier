@@ -1,4 +1,4 @@
-# Pictelier · 0.3.66.9
+# Pictelier · 0.3.66.10
 
 [![简体中文](https://img.shields.io/badge/简体中文-Readme-lightgrey)](README.md) [![English](https://img.shields.io/badge/English-Current-blue)](README.en.md)
 
@@ -13,11 +13,20 @@ Pictelier (绘坊) is an AI creative workspace that stores generated images on y
 
 **Quick navigation**
 
-- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-9)
+- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-10) · [AI scripting guide (Chinese)](agent.md)
 - **Deploy:** [Docker](#section-2) · [1Panel](#section-3)
 - **Configure:** [Paths and proxies](#section-4) · [Providers](#section-5) · [Environment variables](#section-8)
 - **Use and maintain:** [Appearance](#section-6) · [Tasks and data](#section-7) · [Backups](#section-9) · [Troubleshooting](#section-10)
 - **Legal:** [License](#section-11) · [Privacy](#section-12) · [Disclaimer](#section-13)
+
+<a id="release-0-3-66-10"></a>
+
+## What changes in 0.3.66.10
+
+- **Data directory permissions:** startup prepares write access to the dedicated data directory, existing database, media, and backups, then runs the application as UID/GID 1000. Read-only mounts report a clear error. Compose defaults to `./docker-data` inside the project directory.
+- **Full image navigation:** the large preview supports switching between task outputs across the current gallery page. Translucent buttons stay centered on the window sides with space reserved beside the image. Task prompts update with the selection, which is retained when closing the preview.
+- **Page caching:** fixes a Service Worker race that cloned a page response after its body had started being read, causing cache errors in Firefox. Cache write failures no longer affect delivery of the online page.
+- **AI scripting guide:** [agent.md](agent.md) documents browser operation, reference uploads, and result retrieval using a user-provided usage code. It recommends usage-code limits, requires asking the user to choose among multiple API profiles, and requires pausing and asking the user when quota runs out before the goal is complete.
 
 <a id="release-0-3-66-9"></a>
 
@@ -65,14 +74,9 @@ Interface preview: 0.3.66.9 with local demonstration data for the gallery and se
 
 ## Docker deployment
 
-Docker Engine and Docker Compose v2 are sufficient. The production container runs as UID/GID **1000** and listens on port **8787**. The supplied Compose template publishes it on port **8787** by default.
+Docker Engine and Docker Compose v2 are sufficient. The application runs as UID/GID **1000** and listens on port **8787**. The supplied Compose template publishes it on port **8787** by default.
 
-Create a persistent data directory for a new installation:
-
-```bash
-mkdir -p /opt/pictelier-data
-chown 1000:1000 /opt/pictelier-data
-```
+The default data directory is `./docker-data` inside the Compose project. Startup creates it and prepares write permissions before running the application as UID/GID 1000. Set `APP_DATA_DIR` to an absolute path if you want a different dedicated data directory.
 
 Use [deploy/docker-compose.yml](deploy/docker-compose.yml) for a prebuilt image, or combine it with [deploy/docker-compose.build.yml](deploy/docker-compose.build.yml) to build from source. Copy [deploy/.env.example](deploy/.env.example) to `.env` beside the Compose file and set:
 
@@ -92,7 +96,7 @@ docker compose pull app
 docker compose up -d
 ```
 
-Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.9` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
+Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.10` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
 
 For offline installation, load the release archive with `docker load -i <archive.tar.gz>`, then use its image tag in Compose. Release downloads are available on the [releases page](https://github.com/EttijBaqaee/pictelier/releases).
 
@@ -101,7 +105,7 @@ For offline installation, load the release archive with `docker load -i <archive
 Clone or download the desired version, then configure the build template:
 
 ```bash
-git clone --branch v0.3.66.9 https://github.com/EttijBaqaee/pictelier.git
+git clone --branch v0.3.66.10 https://github.com/EttijBaqaee/pictelier.git
 cd pictelier/deploy
 cp .env.example .env
 # Edit .env and set APP_SECRET, ADMIN_PASSWORD, and APP_DATA_DIR before starting.
@@ -114,7 +118,9 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ## 1Panel
 
-Create a Compose application and paste the full [deployment template](deploy/docker-compose.yml). Set `APP_SECRET`, `ADMIN_PASSWORD`, and an absolute `APP_DATA_DIR` in its environment settings. Keep the container port at 8787; change the host port if needed.
+Create a Compose application and paste the full [deployment template](deploy/docker-compose.yml). Set `APP_SECRET` and `ADMIN_PASSWORD` in its environment settings. Leave `APP_DATA_DIR` empty to use `./docker-data` inside the Compose project, or set an absolute path to a dedicated data directory. For a 1Panel project named `pictelier`, the default usually resolves to `/opt/1panel/docker/compose/pictelier/docker-data`. Keep the container port at 8787; change the host port if needed.
+
+At startup, the container prepares the data directory and existing files for UID/GID 1000, then runs the application as that user. Keep the template's entrypoint and capability settings. Use a directory dedicated to Pictelier; do not mount system directories or another application's data.
 
 Compose environment variables use either a mapping or a list. For example:
 
@@ -244,24 +250,13 @@ Provider initialization applies when no default profile exists. For saved profil
 
 1. Export a backup and record the current image tag, data mount, `APP_SECRET`, password, and path settings.
 2. Stop the container before copying the entire persistent directory, including SQLite WAL/SHM files if present.
-3. Confirm that UID/GID 1000 can read and write the entire persistent directory, including its existing database and media files.
+3. Confirm that the data mount and host filesystem are writable. Startup prepares the dedicated directory and existing files for UID/GID 1000.
 4. Keep the original data mount and secret, update the image tag, then recreate the container. Database schema changes are applied automatically.
 5. Open the configured application path and confirm that the existing tasks and provider profiles are present.
 
-For `SQLITE_READONLY` or `EACCES`, confirm that `/app/data` is mounted read-write and that UID/GID 1000 can write the database, its WAL/SHM files, and all media directories. Stop the application and back up the data directory, then run the following as root in the actual Compose directory:
+The entrypoint prepares ownership and owner permissions before dropping to UID/GID 1000. This includes the database, WAL/SHM files, media, and backups. It preserves file contents and hard links, does not follow symbolic links, and does not cross filesystem boundaries.
 
-```bash
-set -e
-docker compose stop app
-docker compose run --rm --no-deps --user 0:0 \
-  --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
-  --entrypoint sh app -eu -c \
-  'chown -Rh 1000:1000 /app/data && chmod -R u+rwX /app/data'
-docker compose up -d app
-docker compose logs --tail=50 app
-```
-
-`app` is the template's service name. The one-off container uses the service's data mount and adjusts ownership and owner permissions. Include the same `-f` files in every command when using an override. A read-only mount or host filesystem must be corrected before changing file permissions.
+For `SQLITE_READONLY` or `EACCES`, confirm that `/app/data` is mounted read-write and that its host path is correct. A read-only host filesystem must be repaired on the host. If NFS or another storage system prevents ownership changes, prepare the dedicated directory and files for UID/GID 1000 on the storage server, then run with `user: "1000:1000"`. Explicit non-root users skip automatic permission repair. Mount the real data directory directly; external symlink targets are not repaired.
 
 Use your actual persistence path. Do not replace it with a new empty directory, and do not remove the volume during an upgrade. To roll back after a schema change, restore the matching pre-upgrade backup together with its original image.
 

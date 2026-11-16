@@ -78,12 +78,15 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response.ok) {
             const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, copy)
-              if (isHtmlRequest(request)) {
-                cache.put('./index.html', response.clone())
-              }
-            })
+            const shellCopy = response.clone()
+            event.waitUntil(
+              caches.open(CACHE_NAME)
+                .then((cache) => Promise.all([
+                  cache.put(request, copy),
+                  cache.put('./index.html', shellCopy),
+                ]))
+                .catch(() => {}),
+            )
           }
           return response
         })

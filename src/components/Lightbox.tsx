@@ -1,5 +1,5 @@
 import { t, getLocale } from '../lib/i18n'
-import { Suspense, lazy, useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react'
+import { Suspense, lazy, useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useStore, getCachedImage, ensureTaskImageAvailable } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { createMaskPreviewDataUrl, createMarkupPreviewDataUrl } from '../lib/canvasImage'
@@ -7,16 +7,14 @@ import { resolveTaskImageDisplaySrc } from '../lib/resolveTaskImageDisplay'
 import {
   isLightboxSwipeTarget,
   isTouchTapLike,
-  resolveLightboxDisplayRect,
-  resolveLightboxNavButtonPositions,
   type ImageCarouselHandle,
 } from '../lib/touchGesture'
 import { resolveLightboxCompareTarget } from '../lib/lightboxCompare'
-import LightboxImageCarousel, { type LightboxCarouselNavState } from './LightboxImageCarousel'
+import LightboxImageCarousel from './LightboxImageCarousel'
 import LightboxImageCompare from './LightboxImageCompare'
 
 const lightboxNavBtnClass =
-  'fixed z-[70] -translate-y-1/2 rounded-full bg-black/45 p-1.5 text-white backdrop-blur-sm transition hover:bg-black/60'
+  'fixed top-1/2 z-[70] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/35 text-white/90 shadow-sm backdrop-blur-sm transition hover:bg-black/55 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 disabled:cursor-default disabled:opacity-25 disabled:hover:bg-black/35'
 
 const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal'))
 
@@ -37,6 +35,8 @@ export default function Lightbox() {
   const lightboxStartEditor = useStore((s) => s.lightboxStartEditor)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
+  const detailTaskId = useStore((s) => s.detailTaskId)
+  const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const inputImages = useStore((s) => s.inputImages)
   const [asyncSrc, setAsyncSrc] = useState('')
   const [compareAsyncSrc, setCompareAsyncSrc] = useState('')
@@ -205,8 +205,14 @@ export default function Lightbox() {
   const goToIndex = useCallback((idx: number) => {
     if (lightboxImageList.length === 0) return
     const wrapped = ((idx % lightboxImageList.length) + lightboxImageList.length) % lightboxImageList.length
-    setLightboxImageId(lightboxImageList[wrapped], lightboxImageList)
-  }, [lightboxImageList, setLightboxImageId])
+    const nextImageId = lightboxImageList[wrapped]
+    setLightboxImageId(nextImageId, lightboxImageList)
+    const detailTask = tasks.find((item) => item.id === detailTaskId)
+    if (lightboxImageId && detailTask?.outputImages.includes(lightboxImageId)) {
+      const nextTask = tasks.find((item) => item.outputImages.includes(nextImageId))
+      if (nextTask) setDetailTaskId(nextTask.id)
+    }
+  }, [detailTaskId, lightboxImageId, lightboxImageList, setDetailTaskId, setLightboxImageId, tasks])
 
   if (!lightboxImageId) return null
 
@@ -288,19 +294,7 @@ function LightboxInner({
   const canCompare = Boolean(compareTarget && compareSrc && primarySrc)
   const containerRef = useRef<HTMLDivElement>(null)
   const carouselPanelRef = useRef<HTMLDivElement>(null)
-  const carouselWrapRef = useRef<HTMLDivElement>(null)
   const carouselRef = useRef<ImageCarouselHandle>(null)
-  const [carouselNavState, setCarouselNavState] = useState<LightboxCarouselNavState>({
-    dragOffset: 0,
-    isDragging: false,
-    panelWidth: 0,
-  })
-  const [lightboxNavAnchor, setLightboxNavAnchor] = useState<{
-    prevX: number
-    prevY: number
-    nextX: number
-    nextY: number
-  } | null>(null)
   // 用 ref 追踪最新变换，避免闭包过期
   const scaleRef = useRef(1)
   const txRef = useRef(0)
@@ -728,72 +722,7 @@ function LightboxInner({
   const ty = tyRef.current
   const isZoomed = s > 1
   const isDragging = dragRef.current.active || pinchRef.current.active
-  const updateLightboxNavAnchor = useCallback(() => {
-    const panel = carouselPanelRef.current
-    if (!panel || !showNav || isZoomed) {
-      setLightboxNavAnchor(null)
-      return
-    }
-    // 补间期间保留上一帧锚点，避免箭头闪烁
-    if (carouselNavState.isDragging) {
-      return
-    }
-    const img = panel.querySelector(
-      'img.saveable-image[data-lightbox-active="true"]',
-    ) as HTMLImageElement | null
-    if (!img) {
-      setLightboxNavAnchor(null)
-      return
-    }
-
-    const computed = resolveLightboxDisplayRect(img)
-    if (!computed) {
-      setLightboxNavAnchor(null)
-      return
-    }
-
-    const nav = resolveLightboxNavButtonPositions(computed)
-    setLightboxNavAnchor({
-      prevX: nav.prevLeft,
-      prevY: nav.prevTop,
-      nextX: nav.nextLeft,
-      nextY: nav.nextTop,
-    })
-  }, [carouselNavState.isDragging, isZoomed, showNav])
-
-  useLayoutEffect(() => {
-    updateLightboxNavAnchor()
-  }, [updateLightboxNavAnchor, carouselNavState.isDragging, carouselNavState.panelWidth, currentIndex, imageId, s, tx, ty])
-
-  useEffect(() => {
-    const panel = carouselPanelRef.current
-    if (!panel) return
-    const observer = new ResizeObserver(() => updateLightboxNavAnchor())
-    observer.observe(panel)
-    const onLoad = () => {
-      window.requestAnimationFrame(() => updateLightboxNavAnchor())
-    }
-    panel.addEventListener('load', onLoad, true)
-    window.addEventListener('resize', updateLightboxNavAnchor)
-    return () => {
-      observer.disconnect()
-      panel.removeEventListener('load', onLoad, true)
-      window.removeEventListener('resize', updateLightboxNavAnchor)
-    }
-  }, [updateLightboxNavAnchor])
-
-  useEffect(() => {
-    const wrap = carouselWrapRef.current
-    if (!wrap) return
-    const onAnimationEnd = (event: AnimationEvent) => {
-      if (event.animationName !== 'zoom-in') return
-      updateLightboxNavAnchor()
-    }
-    wrap.addEventListener('animationend', onAnimationEnd)
-    return () => wrap.removeEventListener('animationend', onAnimationEnd)
-  }, [updateLightboxNavAnchor, imageId])
-
-  const showLightboxNav = showNav && !isZoomed && !compareMode && lightboxNavAnchor
+  const showLightboxNav = showNav && !isZoomed && !compareMode
   const zoomTransform = `translate(${tx}px, ${ty}px) scale(${s})`
   const zoomTransition = isDragging ? 'none' : 'transform 0.2s ease-out'
   const zoomPercent = Math.round(s * 100)
@@ -850,7 +779,6 @@ function LightboxInner({
         </button>
       </div>
       <div
-        ref={carouselWrapRef}
         className="pointer-events-auto relative flex h-[100dvh] w-[100vw] items-center justify-center animate-zoom-in"
       >
         {compareMode && compareTarget ? (
@@ -870,7 +798,6 @@ function LightboxInner({
             zoomTransition={zoomTransition}
             swipeEnabled={showNav && !isZoomed}
             onIndexChangeRequest={onGoToIndex}
-            onNavStateChange={setCarouselNavState}
             onSwipeGesture={handleCarouselSwipeGesture}
             carouselPanelRef={carouselPanelRef}
           />
@@ -879,54 +806,52 @@ function LightboxInner({
 
       {showLightboxNav ? (
         <>
-          {canGoPrev ? (
-            <button
-              type="button"
-              data-lightbox-control
-              className={lightboxNavBtnClass}
-              style={{
-                left: lightboxNavAnchor.prevX,
-                top: lightboxNavAnchor.prevY,
-              }}
-              aria-label={t("上一张")}
-              onPointerDown={(event) => event.stopPropagation()}
-              onTouchStart={(event) => event.stopPropagation()}
-              onTouchEnd={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                handleNavPrev()
-              }}
-              onDoubleClick={stopControlDoubleClick}
-            >
-              <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-          ) : null}
-          {canGoNext ? (
-            <button
-              type="button"
-              data-lightbox-control
-              className={lightboxNavBtnClass}
-              style={{
-                left: lightboxNavAnchor.nextX,
-                top: lightboxNavAnchor.nextY,
-              }}
-              aria-label={t("下一张")}
-              onPointerDown={(event) => event.stopPropagation()}
-              onTouchStart={(event) => event.stopPropagation()}
-              onTouchEnd={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                handleNavNext()
-              }}
-              onDoubleClick={stopControlDoubleClick}
-            >
-              <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          ) : null}
+          <button
+            type="button"
+            data-lightbox-control
+            className={lightboxNavBtnClass}
+            style={{
+              left: 'max(0.75rem, calc(env(safe-area-inset-left, 0px) + 0.5rem))',
+            }}
+            disabled={!canGoPrev}
+            title={t("上一张")}
+            aria-label={t("上一张")}
+            onPointerDown={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
+            onTouchEnd={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              handleNavPrev()
+            }}
+            onDoubleClick={stopControlDoubleClick}
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            data-lightbox-control
+            className={lightboxNavBtnClass}
+            style={{
+              right: 'max(0.75rem, calc(env(safe-area-inset-right, 0px) + 0.5rem))',
+            }}
+            disabled={!canGoNext}
+            title={t("下一张")}
+            aria-label={t("下一张")}
+            onPointerDown={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
+            onTouchEnd={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              handleNavNext()
+            }}
+            onDoubleClick={stopControlDoubleClick}
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
         </>
       ) : null}
 
