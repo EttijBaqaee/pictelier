@@ -1,4 +1,4 @@
-# Pictelier · 0.3.66.10
+# Pictelier · 0.3.66.11
 
 [![简体中文](https://img.shields.io/badge/简体中文-Readme-lightgrey)](README.md) [![English](https://img.shields.io/badge/English-Current-blue)](README.en.md)
 
@@ -13,11 +13,24 @@ Pictelier (绘坊) is an AI creative workspace that stores generated images on y
 
 **Quick navigation**
 
-- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-10) · [AI scripting guide (Chinese)](agent.md)
+- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-11) · [AI scripting guide (Chinese)](agent.md)
 - **Deploy:** [Docker](#section-2) · [1Panel](#section-3)
 - **Configure:** [Paths and proxies](#section-4) · [Providers](#section-5) · [Environment variables](#section-8)
 - **Use and maintain:** [Appearance](#section-6) · [Tasks and data](#section-7) · [Backups](#section-9) · [Troubleshooting](#section-10)
 - **Legal:** [License](#section-11) · [Privacy](#section-12) · [Disclaimer](#section-13)
+
+<a id="release-0-3-66-11"></a>
+
+## What changes in 0.3.66.11
+
+- **Clear failed tasks:** review the count and scope before clearing failures across all pages, favorites, and archives. Only tasks in the confirmed list that are still failed are removed. Running, completed, and canceled tasks remain. Usage codes can clear only their current code's failures; administrators exclude usage-code tasks unless their visibility is enabled, in which case the dialog adds a red scope warning. Files still referenced by another task are retained.
+- **Usage-code deletion charges:** deleting submitted, generating, or downloading tasks does not refund their credits, and the upstream service may continue generating. Pending tasks that have not been submitted can still be refunded; failure refunds remain idempotent.
+- **Recovery after output persistence:** startup verifies fully saved outputs, repairs thumbnails, and completes the task to avoid another submission and duplicate outputs after a restart at that boundary.
+- **Cleanup concurrency:** only one batch cleanup runs per instance. Repeated requests from the same session and cleanup requests from other users are rejected while browsing and generation remain available. Restarting the container releases the lock and invalidates old cleanup tokens; abandoned idle leases expire automatically.
+- **Large image preview:** removes page and zoom tween animations and fixes navigation buttons on mobile. The whole image fits as large as possible within the screen. Navigation appears only at the fitted zoom level. Wheel and pinch gestures briefly snap there for about 0.28 seconds, then allow continued zooming. Pinching does not turn pages.
+- **Long galleries and image loading:** search scans the complete archive in batches, fixing missing older results. Database indexes and queries improve bulk cleanup; shared image cache URLs are no longer released prematurely during navigation.
+- **Configuration and help:** the API selector also appears with one available profile and stays hidden with none. The operation guide displays the maintainer.
+- **Source image builds:** build stages include native compilation tools so SQLite can fall back to a local build if its prebuilt download fails. These tools are excluded from the runtime image.
 
 <a id="release-0-3-66-10"></a>
 
@@ -96,7 +109,7 @@ docker compose pull app
 docker compose up -d
 ```
 
-Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.10` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
+Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.11` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
 
 For offline installation, load the release archive with `docker load -i <archive.tar.gz>`, then use its image tag in Compose. Release downloads are available on the [releases page](https://github.com/EttijBaqaee/pictelier/releases).
 
@@ -105,7 +118,7 @@ For offline installation, load the release archive with `docker load -i <archive
 Clone or download the desired version, then configure the build template:
 
 ```bash
-git clone --branch v0.3.66.10 https://github.com/EttijBaqaee/pictelier.git
+git clone --branch v0.3.66.11 https://github.com/EttijBaqaee/pictelier.git
 cd pictelier/deploy
 cp .env.example .env
 # Edit .env and set APP_SECRET, ADMIN_PASSWORD, and APP_DATA_DIR before starting.

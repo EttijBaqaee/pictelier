@@ -1,5 +1,7 @@
 import { t } from '../lib/i18n'
-import { useStore } from '../store'
+import { useRef, useState } from 'react'
+import { clearFailedTasks, useStore } from '../store'
+import { fetchFailedBackendTaskIds } from '../lib/backendTasks'
 import Select from './Select'
 
 export default function SearchBar() {
@@ -24,9 +26,55 @@ export default function SearchBar() {
   const setShowUsageCodeTasksForAdmin = useStore((s) => s.setShowUsageCodeTasksForAdmin)
   const blurLoadedImages = useStore((s) => s.blurLoadedImages)
   const setBlurLoadedImages = useStore((s) => s.setBlurLoadedImages)
+  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const showToast = useStore((s) => s.showToast)
+  const [clearingFailed, setClearingFailed] = useState(false)
+  const clearFailedLock = useRef(false)
   const topButtonClass = 'flex h-11 w-11 items-center justify-center rounded-xl border transition-all'
   const hasSearchContent = Boolean(searchQuery.trim() || searchTags.length > 0)
   const isExcludeMode = searchTagMode === 'exclude'
+
+  const handleClearFailed = async () => {
+    if (clearFailedLock.current) return
+    clearFailedLock.current = true
+    setClearingFailed(true)
+    const includeUsageCodes = authStatus?.role === 'admin' && showUsageCodeTasksForAdmin
+    try {
+      const taskIds = await fetchFailedBackendTaskIds(includeUsageCodes)
+      if (!taskIds.length) {
+        showToast(t("没有可清除的失败任务"), 'info')
+        return
+      }
+      const scope = authStatus?.role === 'admin'
+        ? includeUsageCodes ? t("管理员、历史及全部使用码任务") : t("管理员及历史任务（不含使用码）")
+        : t("当前已登录使用码的任务")
+      setConfirmDialog({
+        title: t("清除失败任务"),
+        warning: includeUsageCodes ? t("管理员请注意：已开启“显示使用码图片”，本次清理将包含所有使用码用户的失败任务。若只想清理管理员及历史任务，请取消并关闭该选项。") : undefined,
+        message: t("将永久删除 {0} 条失败任务。范围：{1}，包含所有分页、收藏和归档，不受搜索及其他筛选影响。\n只删除确认时仍为失败状态的任务，已取消、生成中和已完成的任务均保留。关联文件仅在没有其他任务引用时清理。此操作无法撤销。", taskIds.length, scope),
+        confirmText: t("确认清除"),
+        tone: 'danger',
+        action: () => {
+          const usageCodesStillVisible = authStatus?.role === 'admin' && useStore.getState().showUsageCodeTasksForAdmin
+          if (includeUsageCodes && !usageCodesStillVisible) {
+            showToast(t("显示使用码图片状态已变化，请重新确认清理范围"), 'info')
+            return
+          }
+          clearFailedLock.current = true
+          setClearingFailed(true)
+          void clearFailedTasks(taskIds, includeUsageCodes).finally(() => {
+            clearFailedLock.current = false
+            setClearingFailed(false)
+          })
+        },
+      })
+    } catch (error) {
+      showToast(t("读取失败任务失败：{0}", error instanceof Error ? error.message : String(error)), 'error')
+    } finally {
+      clearFailedLock.current = false
+      setClearingFailed(false)
+    }
+  }
 
   const commitSearchTag = () => {
     const nextTag = searchQuery.trim()
@@ -132,7 +180,7 @@ export default function SearchBar() {
           ))}
         </div>
       </div>
-      <div className={`grid w-full min-w-0 gap-2 ${authStatus?.role === 'admin' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      <div className={`grid w-full min-w-0 gap-2 ${authStatus?.role === 'admin' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2'}`}>
         {authStatus?.role === 'admin' && (
           <button
             onClick={() => setShowUsageCodeTasksForAdmin(!showUsageCodeTasksForAdmin)}
@@ -159,6 +207,17 @@ export default function SearchBar() {
             className="flex h-11 items-center rounded-xl border border-gray-200 bg-white px-3 text-sm transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 dark:border-white/[0.08] dark:bg-gray-900 dark:hover:bg-white/[0.06]"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => { void handleClearFailed() }}
+          disabled={clearingFailed || authStatus?.maintenance.active}
+          className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 text-xs text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/25 dark:bg-gray-900 dark:text-red-400 dark:hover:bg-red-500/10 sm:text-sm ${authStatus?.role === 'admin' ? 'col-span-2 sm:col-span-1' : ''}`}
+        >
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6" />
+          </svg>
+          {clearingFailed ? t("正在清除失败任务...") : t("一键清除失败任务")}
+        </button>
       </div>
       <div className="relative z-10 w-full min-w-0">
         <svg

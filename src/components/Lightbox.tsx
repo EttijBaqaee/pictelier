@@ -1,5 +1,5 @@
 import { t, getLocale } from '../lib/i18n'
-import { Suspense, lazy, useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { Suspense, lazy, useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useStore, getCachedImage, ensureTaskImageAvailable } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { createMaskPreviewDataUrl, createMarkupPreviewDataUrl } from '../lib/canvasImage'
@@ -20,6 +20,8 @@ const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
+const FIT_SCALE_SNAP_THRESHOLD = 1.05
+const FIT_SCALE_PAUSE_MS = 280
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v))
@@ -299,6 +301,7 @@ function LightboxInner({
   const scaleRef = useRef(1)
   const txRef = useRef(0)
   const tyRef = useRef(0)
+  const fitScalePauseUntilRef = useRef(0)
 
   // 仅用于触发渲染
   const [, forceRender] = useState(0)
@@ -375,10 +378,11 @@ function LightboxInner({
   }, [])
 
   // 切换图片时重置缩放与对比模式
-  useEffect(() => {
+  useLayoutEffect(() => {
     scaleRef.current = 1
     txRef.current = 0
     tyRef.current = 0
+    fitScalePauseUntilRef.current = 0
     didNavSwipeRef.current = false
     setCompareMode(false)
     rerender()
@@ -434,6 +438,17 @@ function LightboxInner({
     rerender()
   }, [rerender])
 
+  const resolveGestureScale = useCallback((requestedScale: number) => {
+    const now = performance.now()
+    if (now < fitScalePauseUntilRef.current) return MIN_SCALE
+    const nextScale = clamp(requestedScale, MIN_SCALE, MAX_SCALE)
+    if (scaleRef.current > MIN_SCALE && nextScale < scaleRef.current && nextScale <= FIT_SCALE_SNAP_THRESHOLD) {
+      fitScalePauseUntilRef.current = now + FIT_SCALE_PAUSE_MS
+      return MIN_SCALE
+    }
+    return nextScale
+  }, [])
+
   // ====== 滚轮缩放 ======
   useEffect(() => {
     const el = containerRef.current
@@ -442,6 +457,7 @@ function LightboxInner({
     const onWheel = (e: WheelEvent) => {
       if (compareMode) return
       e.preventDefault()
+      if (e.deltaY === 0) return
       const s = scaleRef.current
       const tx = txRef.current
       const ty = tyRef.current
@@ -450,14 +466,14 @@ function LightboxInner({
       const my = e.clientY - rect.top - rect.height / 2
 
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
-      const ns = clamp(s * factor, MIN_SCALE, MAX_SCALE)
+      const ns = resolveGestureScale(s * factor)
       const r = ns / s
       apply(ns, mx - r * (mx - tx), my - r * (my - ty))
     }
 
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [apply, compareMode])
+  }, [apply, compareMode, resolveGestureScale])
 
   // ====== 鼠标拖拽 + 点击关闭 ======
   useEffect(() => {
@@ -511,7 +527,7 @@ function LightboxInner({
       return
     }
     if (didDragRef.current) return
-    if (scaleRef.current > 1 && e.target instanceof HTMLImageElement) return
+    if (e.target instanceof HTMLImageElement) return
     onClose()
   }, [compareMode, onClose])
 
@@ -535,7 +551,9 @@ function LightboxInner({
       const { cx, cy } = getCenter()
       const mx = e.clientX - cx
       const my = e.clientY - cy
-      apply(3, -mx * 2, -my * 2)
+      const nextScale = 3
+      const ratio = nextScale / scaleRef.current
+      apply(nextScale, -mx * (ratio - 1), -my * (ratio - 1))
     }
   }, [apply, compareMode, getCenter])
 
@@ -597,7 +615,9 @@ function LightboxInner({
             const { cx, cy } = getCenter()
             const mx = t.clientX - cx
             const my = t.clientY - cy
-            apply(3, -mx * 2, -my * 2)
+            const nextScale = 3
+            const ratio = nextScale / scaleRef.current
+            apply(nextScale, -mx * (ratio - 1), -my * (ratio - 1))
           }
           tapRef.current = { time: 0, x: 0, y: 0 }
           return
@@ -623,9 +643,17 @@ function LightboxInner({
         const [a, b] = [e.touches[0], e.touches[1]]
         const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
         const p = pinchRef.current
-        const ns = clamp(p.startScale * (dist / p.startDist), MIN_SCALE, MAX_SCALE)
+        if (dist <= 0 || p.startDist <= 0) return
+        const ns = resolveGestureScale(p.startScale * (dist / p.startDist))
         const r = ns / p.startScale
         apply(ns, p.midX - r * (p.midX - p.startTx), p.midY - r * (p.midY - p.startTy))
+        // Discard motion during the pause, so releasing it never jumps in scale.
+        if (ns === MIN_SCALE) {
+          p.startDist = dist
+          p.startScale = MIN_SCALE
+          p.startTx = 0
+          p.startTy = 0
+        }
       } else if (dragRef.current.active && e.touches.length === 1) {
         e.preventDefault()
         const t = e.touches[0]
@@ -668,7 +696,7 @@ function LightboxInner({
           return
         }
         if (scaleRef.current <= 1 && touchStartedOnImageRef.current) {
-          tapRef.current = { time: 0, x: 0, y: 0 }
+          suppressNextClickRef.current = true
           return
         }
         if (scaleRef.current <= 1 || !touchStartedOnImageRef.current) {
@@ -697,9 +725,9 @@ function LightboxInner({
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [apply, compareMode, getCenter, onClose])
+  }, [apply, compareMode, getCenter, onClose, resolveGestureScale])
 
-  // 键盘左右切换（与箭头共用轮播补间动画）
+  // 键盘左右切换（与箭头共用即时翻页）
   useEffect(() => {
     if (!showNav || compareMode) return
     const onKey = (e: KeyboardEvent) => {
@@ -722,9 +750,10 @@ function LightboxInner({
   const ty = tyRef.current
   const isZoomed = s > 1
   const isDragging = dragRef.current.active || pinchRef.current.active
-  const showLightboxNav = showNav && !isZoomed && !compareMode
+  const isDefaultZoom = s === 1
+  const showLightboxNav = showNav && isDefaultZoom && !compareMode
   const zoomTransform = `translate(${tx}px, ${ty}px) scale(${s})`
-  const zoomTransition = isDragging ? 'none' : 'transform 0.2s ease-out'
+  const zoomTransition = 'none'
   const zoomPercent = Math.round(s * 100)
 
   return (
@@ -741,6 +770,20 @@ function LightboxInner({
     >
       <div className="glass-overlay absolute inset-0 animate-fade-in" />
       <div className="lightbox-control-top-actions absolute z-20 flex items-center gap-2">
+        {!isDefaultZoom && !compareMode ? (
+          <button
+            type="button"
+            data-lightbox-control
+            className="rounded-full bg-black/45 px-3 py-2 text-sm text-white backdrop-blur-sm hover:bg-black/65"
+            title={t("恢复默认缩放")}
+            aria-label={t("恢复默认缩放")}
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); apply(1, 0, 0) }}
+            onDoubleClick={stopControlDoubleClick}
+          >↺</button>
+        ) : null}
         {canCompare ? (
           <button
             type="button"
@@ -777,9 +820,21 @@ function LightboxInner({
         >
           {isReferenceImage ? t("高级编辑") : t("高级编辑并加入参考图")}
         </button>
+        <button
+          type="button"
+          data-lightbox-control
+          className="rounded-full bg-black/45 px-3 py-2 text-sm text-white backdrop-blur-sm hover:bg-black/65"
+          aria-label={t("关闭图片预览")}
+          title={t("关闭图片预览")}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onClose() }}
+          onDoubleClick={stopControlDoubleClick}
+        >×</button>
       </div>
       <div
-        className="pointer-events-auto relative flex h-[100dvh] w-[100vw] items-center justify-center animate-zoom-in"
+        className="pointer-events-auto relative flex h-[100dvh] w-[100vw] items-center justify-center"
       >
         {compareMode && compareTarget ? (
           <LightboxImageCompare
@@ -856,14 +911,14 @@ function LightboxInner({
       ) : null}
 
       {/* 底部指示器 */}
-      {showZoomBadge && isZoomed && zoomPercent !== 100 && (
+      {showZoomBadge && isZoomed && !isDefaultZoom && zoomPercent !== 100 && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none">
           <span className="px-3 py-1.5 bg-black/50 text-white/80 text-xs rounded-full backdrop-blur-sm transition-opacity duration-500">
             {zoomPercent}%
           </span>
         </div>
       )}
-      {showNav && !isZoomed && !compareMode && (
+      {showLightboxNav && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none">
           <span className="px-3 py-1.5 bg-black/50 text-white/80 text-xs rounded-full backdrop-blur-sm">
             {currentIndex + 1} / {total}

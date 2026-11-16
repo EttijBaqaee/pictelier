@@ -465,6 +465,8 @@ export default function InputBar() {
   const handleDeleteSelected = useCallback(() => {
     setConfirmDialog({
       title: t("批量删除"),
+      warning: tasks.some((task) => selectedTaskIds.includes(task.id) && task.ownerKind === 'usage_code')
+        ? t("若使用码任务仍在提交、生成或下载，删除不会返还已扣次数，也不保证上游停止生成。") : undefined,
       message: t("确定要删除选中的 {0} 条记录吗？", selectedTaskIds.length),
       action: () => {
         removeMultipleTasks(selectedTaskIds)
@@ -1899,7 +1901,7 @@ export default function InputBar() {
   )
 
   const mobileChipClass = 'inline-flex h-9 items-center gap-1 whitespace-nowrap rounded-full border border-gray-200/60 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-gray-600 shadow-sm transition-all active:scale-95 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-gray-300'
-  const showProviderSelector = modeProviderOptions.length > 1
+  const showProviderSelector = modeProviderOptions.length > 0
 
   const renderMobileParamChips = () => (
     <div className="hide-scrollbar flex items-center gap-1.5 overflow-x-auto pb-2">

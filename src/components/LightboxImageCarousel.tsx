@@ -3,12 +3,9 @@ import { useStore, cacheTaskImageForEditing } from '../store'
 import { useTrackedImageLoad } from '../hooks/useTrackedImageLoad'
 import { resolveTaskImageDisplaySrc } from '../lib/resolveTaskImageDisplay'
 import {
-  CAROUSEL_SLIDE_EASING,
-  CAROUSEL_SLIDE_TRANSITION_MS,
   isTouchTapLike,
   resolveTouchAxisLock,
   resolveTouchSwipeThreshold,
-  commitCarouselPendingSlide,
   type ImageCarouselHandle,
   type TouchAxisLock,
 } from '../lib/touchGesture'
@@ -20,7 +17,6 @@ interface LightboxSlideProps {
   imageIndex: number
   imageTotal: number
   maskPreviewSrc?: string
-  reserveNavigationSpace: boolean
 }
 
 function LightboxSlide({
@@ -29,8 +25,10 @@ function LightboxSlide({
   imageIndex,
   imageTotal,
   maskPreviewSrc,
-  reserveNavigationSpace,
 }: LightboxSlideProps) {
+  const slideRef = useRef<HTMLDivElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const [fitSize, setFitSize] = useState<{ width: number; height: number } | null>(null)
   const tasks = useStore((s) => s.tasks)
   const matchedTask = tasks.find((item) =>
     item.inputImageIds.includes(imageId) ||
@@ -55,13 +53,35 @@ function LightboxSlide({
 
   const showOverlay = isActive && (showLoadingOverlay || (!displaySrc && isLoading))
 
+  useLayoutEffect(() => {
+    const image = imageRef.current
+    const slide = slideRef.current
+    if (!image || !slide || !displaySrc) return
+    // 完整显示整张图片，在视口内尽可能放大。
+    const fitImage = () => {
+      if (!image.complete || !image.naturalWidth || !image.naturalHeight) return
+      const style = getComputedStyle(slide)
+      const width = slide.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      const height = slide.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+      if (width <= 0 || height <= 0) return
+      const ratio = Math.min(width / image.naturalWidth, height / image.naturalHeight)
+      const next = { width: image.naturalWidth * ratio, height: image.naturalHeight * ratio }
+      setFitSize((previous) => previous?.width === next.width && previous.height === next.height ? previous : next)
+    }
+    fitImage()
+    const observer = new ResizeObserver(fitImage)
+    observer.observe(slide)
+    image.addEventListener('load', fitImage)
+    return () => {
+      observer.disconnect()
+      image.removeEventListener('load', fitImage)
+    }
+  }, [displaySrc])
+
   return (
     <div
-      className="relative flex h-full w-full flex-shrink-0 items-center justify-center px-2 sm:px-4"
-      style={reserveNavigationSpace ? {
-        paddingLeft: 'calc(4rem + env(safe-area-inset-left, 0px))',
-        paddingRight: 'calc(4rem + env(safe-area-inset-right, 0px))',
-      } : undefined}
+      ref={slideRef}
+      className="relative flex h-full w-full flex-shrink-0 items-center justify-center px-2 py-2 sm:px-4 sm:py-4"
     >
       {showOverlay && (
         <ImageLoadingOverlay
@@ -71,14 +91,16 @@ function LightboxSlide({
           variant="dark"
         />
       )}
-      <div className="relative inline-flex max-h-[90dvh] max-w-[min(92vw,100%)] items-center justify-center">
+      <div className="relative inline-flex max-h-full max-w-full items-center justify-center">
         {displaySrc ? (
           <img
+            ref={imageRef}
             src={displaySrc}
             data-image-id={imageId}
             data-lightbox-active={isActive ? 'true' : undefined}
             data-original-src={matchedTask?.imageUrlsById?.[imageId]}
-            className={`saveable-image max-h-[90dvh] max-w-[min(92vw,100%)] object-contain rounded-lg shadow-2xl transition-opacity duration-200 ${
+            style={fitSize ?? undefined}
+            className={`saveable-image max-h-full max-w-full object-contain rounded-lg shadow-2xl ${
               showLoadingOverlay && isActive ? 'opacity-0' : 'opacity-100'
             }`}
             onLoad={(event) => {
@@ -96,7 +118,7 @@ function LightboxSlide({
         {isActive && maskPreviewSrc && !showLoadingOverlay && displaySrc ? (
           <img
             src={maskPreviewSrc}
-            className="pointer-events-none absolute inset-0 m-auto max-h-[90dvh] max-w-[min(92vw,100%)] rounded-lg object-contain"
+            className="pointer-events-none absolute inset-0 m-auto h-full w-full rounded-lg object-contain"
             alt=""
           />
         ) : null}
@@ -139,34 +161,22 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
 }, ref) {
   const internalPanelRef = useRef<HTMLDivElement>(null)
   const panelRef = carouselPanelRef ?? internalPanelRef
-  const trackRef = useRef<HTMLDivElement>(null)
   const [dragOffset, setDragOffset] = useState(0)
-  const [visualIndex, setVisualIndex] = useState(currentIndex)
   const [isDragging, setIsDragging] = useState(false)
-  const [isAnimating, setIsAnimating] = useState(false)
-  const isAnimatingRef = useRef(false)
   const isDraggingRef = useRef(false)
   const [panelWidth, setPanelWidth] = useState(0)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeLockRef = useRef<TouchAxisLock>(null)
   const dragOffsetRef = useRef(0)
-  const pendingIndexRef = useRef<number | null>(null)
   const currentIndexRef = useRef(currentIndex)
 
   const imageTotal = imageIds.length
   const showTrack = imageTotal > 1
   const slideWidth = panelWidth > 0 ? panelWidth : 0
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     currentIndexRef.current = currentIndex
-    if (!isAnimatingRef.current && !isDraggingRef.current) {
-      setVisualIndex(currentIndex)
-    }
   }, [currentIndex])
-
-  useEffect(() => {
-    isAnimatingRef.current = isAnimating
-  }, [isAnimating])
 
   useEffect(() => {
     isDraggingRef.current = isDragging
@@ -197,82 +207,37 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
   }, [])
 
   useLayoutEffect(() => {
-    onNavStateChange?.({ dragOffset, isDragging: isDragging || isAnimating, panelWidth })
-  }, [dragOffset, isDragging, isAnimating, onNavStateChange, panelWidth])
+    onNavStateChange?.({ dragOffset, isDragging, panelWidth })
+  }, [dragOffset, isDragging, onNavStateChange, panelWidth])
 
   const goToIndex = useCallback((nextIndex: number) => {
     if (imageTotal <= 0) return
     const wrapped = ((nextIndex % imageTotal) + imageTotal) % imageTotal
+    currentIndexRef.current = wrapped
     onIndexChangeRequest(wrapped)
   }, [imageTotal, onIndexChangeRequest])
 
-  const commitPendingSlide = useCallback(() => {
-    const result = commitCarouselPendingSlide({
-      pendingIndexRef,
-      isAnimatingRef,
-      indexRef: currentIndexRef,
-      setIsAnimating,
-      goToIndex,
-      updateDragOffset,
-    })
-    if (result.committed) {
-      setVisualIndex(result.visualIndex)
-    }
-    return result.committed
-  }, [goToIndex, updateDragOffset])
-
-  const runSlideAnimation = useCallback((targetOffset: number, pendingIndex: number | null) => {
-    pendingIndexRef.current = pendingIndex
+  const finishSwipe = useCallback((nextIndex?: number) => {
+    isDraggingRef.current = false
     setIsDragging(false)
-    isAnimatingRef.current = true
-    setIsAnimating(true)
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        updateDragOffset(targetOffset)
-      })
-    })
-  }, [updateDragOffset])
-
-  const finalizeSlideAnimation = useCallback(() => {
-    const pendingIndex = pendingIndexRef.current
-    pendingIndexRef.current = null
-    isAnimatingRef.current = false
-    setIsAnimating(false)
-    if (pendingIndex != null) {
-      currentIndexRef.current = pendingIndex
-      setVisualIndex(pendingIndex)
-      goToIndex(pendingIndex)
-    }
     updateDragOffset(0)
+    if (nextIndex != null) goToIndex(nextIndex)
   }, [goToIndex, updateDragOffset])
 
-  const handleTrackTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
-    if (event.propertyName !== 'transform') return
-    if (!isAnimating) return
-    if (event.target !== trackRef.current) return
-    finalizeSlideAnimation()
-  }, [finalizeSlideAnimation, isAnimating])
-
   useEffect(() => {
-    if (!isAnimating) return
-    const timer = window.setTimeout(() => {
-      if (pendingIndexRef.current != null || Math.abs(dragOffsetRef.current) > 0.5) {
-        finalizeSlideAnimation()
-      }
-    }, CAROUSEL_SLIDE_TRANSITION_MS + 80)
-    return () => window.clearTimeout(timer)
-  }, [finalizeSlideAnimation, isAnimating])
-
-  useEffect(() => {
-    if (!isDragging && !isAnimating) {
+    if (!isDragging) {
       updateDragOffset(0)
     }
-  }, [currentIndex, isAnimating, isDragging, updateDragOffset])
+  }, [currentIndex, isDragging, updateDragOffset])
 
   const handleTouchStart = (event: React.TouchEvent) => {
+    if (event.touches.length !== 1) {
+      touchStartRef.current = null
+      swipeLockRef.current = null
+      finishSwipe()
+      return
+    }
     if (!swipeEnabled || !showTrack || slideWidth <= 0) return
-    commitPendingSlide()
     if (!(event.target instanceof Element)) return
     if (!event.target.closest('img.saveable-image') && !event.target.closest('[data-lightbox-carousel]')) return
 
@@ -283,8 +248,11 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
   }
 
   const handleTouchMove = (event: React.TouchEvent) => {
-    if (isAnimatingRef.current) {
-      commitPendingSlide()
+    if (event.touches.length !== 1) {
+      touchStartRef.current = null
+      swipeLockRef.current = null
+      finishSwipe()
+      return
     }
     if (!touchStartRef.current || !swipeEnabled || !showTrack || slideWidth <= 0) return
 
@@ -348,13 +316,13 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
 
     if (shouldGoNext) {
       onSwipeGesture?.({ didSwipe: true, tapLike: false })
-      runSlideAnimation(-slideWidth, activeIndex + 1)
+      finishSwipe(activeIndex + 1)
       return
     }
 
     if (shouldGoPrev) {
       onSwipeGesture?.({ didSwipe: true, tapLike: false })
-      runSlideAnimation(slideWidth, activeIndex - 1)
+      finishSwipe(activeIndex - 1)
       return
     }
 
@@ -364,43 +332,33 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
       onSwipeGesture?.({ didSwipe: false, tapLike: true })
     }
 
-    runSlideAnimation(0, null)
+    finishSwipe()
   }
 
-  const animateStep = useCallback((direction: -1 | 1) => {
-    if (slideWidth <= 0 || isDraggingRef.current || imageTotal <= 1) return
-    if (isAnimatingRef.current) commitPendingSlide()
+  const step = useCallback((direction: -1 | 1) => {
+    if (isDraggingRef.current || imageTotal <= 1) return
     const current = currentIndexRef.current
     if (direction < 0 && current <= 0) return
     if (direction > 0 && current >= imageTotal - 1) return
     const next = current + direction
-    runSlideAnimation(direction > 0 ? -slideWidth : slideWidth, next)
-  }, [commitPendingSlide, imageTotal, runSlideAnimation, slideWidth])
+    goToIndex(next)
+  }, [goToIndex, imageTotal])
 
   useImperativeHandle(ref, () => ({
-    animatePrev: () => animateStep(-1),
-    animateNext: () => animateStep(1),
-  }), [animateStep])
+    animatePrev: () => step(-1),
+    animateNext: () => step(1),
+  }), [step])
 
   const handleTouchCancel = () => {
-    commitPendingSlide()
     touchStartRef.current = null
     swipeLockRef.current = null
-    setIsDragging(false)
-    if (!isAnimatingRef.current) {
-      runSlideAnimation(0, null)
-    }
+    finishSwipe()
     onSwipeGesture?.({ didSwipe: false, tapLike: true })
   }
 
   const translateX = showTrack && slideWidth > 0
-    ? -(visualIndex * slideWidth) + dragOffset
+    ? -(currentIndex * slideWidth) + dragOffset
     : 0
-
-  // 仅在补间动画阶段启用 transition，避免初次定位或外部切 index 时误播滑动
-  const trackTransition = isDragging || !isAnimating
-    ? 'none'
-    : `transform ${CAROUSEL_SLIDE_TRANSITION_MS}ms ${CAROUSEL_SLIDE_EASING}`
 
   return (
     <div
@@ -414,15 +372,13 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
       onTouchCancel={handleTouchCancel}
     >
       <div
-        ref={trackRef}
         className="flex h-full flex-nowrap"
         style={{
           width: slideWidth > 0 ? slideWidth * imageTotal : '100%',
           transform: slideWidth > 0 ? `translate3d(${translateX}px, 0, 0)` : undefined,
-          transition: trackTransition,
+          transition: 'none',
           willChange: 'transform',
         }}
-        onTransitionEnd={handleTrackTransitionEnd}
       >
         {imageIds.map((imageId, index) => (
           <div
@@ -433,19 +389,18 @@ const LightboxImageCarousel = forwardRef<ImageCarouselHandle, LightboxImageCarou
             <div
               className="relative flex h-full w-full items-center justify-center"
               style={{
-                transform: index === visualIndex ? zoomTransform : 'none',
-                transition: index === visualIndex ? zoomTransition : 'none',
-                willChange: index === visualIndex ? 'transform' : undefined,
+                transform: index === currentIndex ? zoomTransform : 'none',
+                transition: index === currentIndex ? zoomTransition : 'none',
+                willChange: index === currentIndex ? 'transform' : undefined,
               }}
             >
-              {(Math.abs(index - visualIndex) <= 1 || Math.abs(index - currentIndex) <= 1) && (
+              {Math.abs(index - currentIndex) <= 1 && (
                 <LightboxSlide
                   imageId={imageId}
-                  isActive={index === visualIndex}
+                  isActive={index === currentIndex}
                   imageIndex={index + 1}
                   imageTotal={imageTotal}
-                  maskPreviewSrc={index === visualIndex ? maskPreviewSrc : undefined}
-                  reserveNavigationSpace={showTrack}
+                  maskPreviewSrc={index === currentIndex ? maskPreviewSrc : undefined}
                 />
               )}
             </div>

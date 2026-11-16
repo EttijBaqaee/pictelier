@@ -315,6 +315,7 @@ export default function DetailModal() {
     setDetailTaskId(null)
     setConfirmDialog({
       title: t("删除记录"),
+      warning: task.ownerKind === 'usage_code' ? t("若使用码任务仍在提交、生成或下载，删除不会返还已扣次数，也不保证上游停止生成。") : undefined,
       message: t("确定要删除这条记录吗？关联的图片资源也会被清理（如果没有其他任务引用）。"),
       action: () => removeTask(task),
     })

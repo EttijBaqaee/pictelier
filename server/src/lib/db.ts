@@ -994,6 +994,10 @@ export class AppDatabase {
       ON task_images(task_id, kind);
       CREATE INDEX IF NOT EXISTS idx_task_events_task_id_created_at
       ON task_events(task_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_usage_code_activity_task_id
+      ON usage_code_activity_logs(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_images_normalized_path
+      ON task_images(replace(file_path, char(92), '/'));
     `)
   }
 
@@ -2577,7 +2581,12 @@ ${selectUsageCodeFields()}
   }
 
   refundTaskQuota(taskId: string, reason: string) {
-    const task = this.getTask(taskId)
+    const task = this.sqlite.prepare(`
+      SELECT task_type as taskType, owner_usage_code_id as ownerUsageCodeId,
+        owner_kind as ownerKind, reserved_image_credits as reservedImageCredits,
+        provider_profile_id as providerProfileId
+      FROM tasks WHERE id = ?
+    `).get(taskId) as Pick<TaskRecord, 'taskType' | 'ownerUsageCodeId' | 'ownerKind' | 'reservedImageCredits' | 'providerProfileId'> | undefined
     if (!task?.ownerUsageCodeId || task.ownerKind !== 'usage_code' || task.reservedImageCredits <= 0) {
       return false
     }
@@ -4350,5 +4359,30 @@ ${selectUsageCodeFields()}
 
   deleteTask(id: string) {
     this.sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(id)
+  }
+
+  getTaskCleanupAccess(id: string) {
+    return this.sqlite.prepare(`
+      SELECT status, owner_kind as ownerKind, owner_usage_code_id as ownerUsageCodeId
+      FROM tasks WHERE id = ?
+    `).get(id) as Pick<TaskRecord, 'status' | 'ownerKind' | 'ownerUsageCodeId'> | undefined
+  }
+
+  listFailedTaskIds(input: { ownerUsageCodeIds?: string[]; includeUsageCodeTasksForAdmin: boolean }) {
+    const where = ["status = 'failed'"]
+    const params: string[] = []
+    if (input.ownerUsageCodeIds) {
+      if (input.ownerUsageCodeIds.length === 0) return []
+      where.push(`owner_kind = 'usage_code' AND owner_usage_code_id IN (${input.ownerUsageCodeIds.map(() => '?').join(', ')})`)
+      params.push(...input.ownerUsageCodeIds)
+    }
+    if (!input.includeUsageCodeTasksForAdmin) where.push("owner_kind <> 'usage_code'")
+    return (this.sqlite.prepare(`SELECT id FROM tasks WHERE ${where.join(' AND ')} ORDER BY created_at, id`)
+      .all(...params) as Array<{ id: string }>).map((task) => task.id)
+  }
+
+  deleteFailedTask(id: string) {
+    // Keep the status guard in the mutation itself, including after a preview.
+    return this.sqlite.prepare(`DELETE FROM tasks WHERE id = ? AND status = 'failed'`).run(id).changes > 0
   }
 }

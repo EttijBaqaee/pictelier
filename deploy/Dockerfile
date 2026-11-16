@@ -10,7 +10,16 @@ COPY . .
 RUN npm run build:web
 
 
-FROM node:22-bookworm-slim AS server-build
+FROM node:22-bookworm-slim AS server-deps-base
+
+# Native SQLite dependencies can compile locally if prebuilt downloads fail.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+ENV npm_config_nodedir=/usr/local
+
+
+FROM server-deps-base AS server-build
 
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
@@ -20,7 +29,7 @@ COPY server ./
 RUN npm run build
 
 
-FROM node:22-bookworm-slim AS server-prod-deps
+FROM server-deps-base AS server-prod-deps
 
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
@@ -46,7 +55,7 @@ COPY --from=server-build /app/server/dist /app/server/dist
 COPY --from=server-build /app/server/package.json /app/server/package.json
 COPY --from=web-build /app/dist /app/dist
 COPY LICENSE NOTICE /app/
-LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.10" org.opencontainers.image.licenses="AGPL-3.0-only"
+LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.11" org.opencontainers.image.licenses="AGPL-3.0-only"
 
 RUN mkdir -p /app/data && chown node:node /app/data
 COPY --chmod=755 deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

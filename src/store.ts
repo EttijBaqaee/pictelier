@@ -28,7 +28,7 @@ import {
 } from './lib/db'
 import { fetchBackendRuntimeSettings } from './lib/backendSettings'
 import { fetchAuthStatus, logoutAuth, type AuthStatus } from './lib/backendAuth'
-import { createBackendTask, deleteBackendTask, fetchBackendTaskPage, updateBackendTaskFlags } from './lib/backendTasks'
+import { createBackendTask, deleteBackendTask, clearFailedBackendTasks, startFailedBackendCleanup, finishFailedBackendCleanup, fetchBackendTaskPage, updateBackendTaskFlags } from './lib/backendTasks'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask, validateMaskTarget } from './lib/mask'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi, replaceImageMentionsForVideoApi } from './lib/promptImageMentions'
@@ -472,6 +472,7 @@ interface AppState {
     message: string
     confirmText?: string
     messageAlign?: 'left' | 'center'
+    warning?: string
     tone?: 'danger' | 'warning'
     action: () => void
     cancelAction?: () => void
@@ -1313,6 +1314,37 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
 
   showToast(t("已删除 {0} 条记录", taskIds.length), 'success')
+}
+
+/** Only remove IDs the server actually deleted; never optimistically remove tasks. */
+export async function clearFailedTasks(taskIds: string[], showUsageCodeTasksForAdmin: boolean) {
+  let deletedCount = 0
+  let processedCount = 0
+  let cleanupToken: string | null = null
+  try {
+    cleanupToken = await startFailedBackendCleanup()
+    for (let offset = 0; offset < taskIds.length; offset += 200) {
+      const batch = taskIds.slice(offset, offset + 200)
+      const includeUsageCodes = showUsageCodeTasksForAdmin && useStore.getState().showUsageCodeTasksForAdmin
+      const deleted = await clearFailedBackendTasks(batch, includeUsageCodes, cleanupToken)
+      deletedCount += deleted.length
+      processedCount += batch.length
+      for (const id of deleted) {
+        closeTaskEventSource(id)
+        removeTaskFromStore(id)
+      }
+    }
+    const skipped = processedCount - deletedCount
+    useStore.getState().showToast(skipped
+      ? t("已清除 {0} 条失败任务，跳过 {1} 条状态已变化或不可访问的任务", deletedCount, skipped)
+      : t("已清除 {0} 条失败任务", deletedCount), 'success')
+  } catch (error) {
+    useStore.getState().showToast(t("清除中断，已清除 {0} 条失败任务：{1}", deletedCount, error instanceof Error ? error.message : String(error)), 'error')
+  } finally {
+    if (cleanupToken) await finishFailedBackendCleanup(cleanupToken).catch(() => {})
+    await refreshTasksFromServer({ force: true })
+    await refreshAuthStatus({ silent: true })
+  }
 }
 
 /** 删除单条任务 */

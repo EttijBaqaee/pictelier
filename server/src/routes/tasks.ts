@@ -135,6 +135,14 @@ function toSearchableTask(
   )
 }
 export const taskRoutes: FastifyPluginAsync = async (app) => {
+  // Process-local: a restart releases the lock and invalidates old tokens.
+  // Covers every session, including gaps between batches. Abandoned idle leases expire.
+  let failedCleanup: { token: string; sessionId: string; running: boolean; expiresAt: number } | null = null
+  const cleanupLeaseMs = 120_000
+  const cleanupBusy = (reply: Parameters<typeof requireAuth>[2]) => reply.code(409).send({ message: '已有失败任务清理正在进行，请稍后再试' })
+  const expireCleanupLease = () => {
+    if (failedCleanup && !failedCleanup.running && failedCleanup.expiresAt <= Date.now()) failedCleanup = null
+  }
   const attachRuntimeMeta = <T extends Record<string, unknown>>(task: T, taskId: string) => {
     const runtime = app.taskWorker.getTaskRuntimeMeta(taskId)
     return {
@@ -438,12 +446,16 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
     let total = 0
     let items: ReturnType<typeof serializeTaskList> = []
     if (hasTextSearch) {
-      const rawTasks = app.db.listTaskPageLight({
-        ...baseInput,
-        limit: auth.role === 'admin' ? ADMIN_TASK_LIST_LIMIT : USER_TASK_LIST_LIMIT,
-        offset: 0,
-      })
-      if (rawTasks.length > 0) {
+      // Search the full archive in bounded batches instead of silently excluding
+      // older records. Yield between batches so other users can still browse.
+      const batchSize = 250
+      const scanTotal = app.db.countTaskPage(baseInput)
+      const start = (query.page - 1) * query.pageSize
+      const pageIds: string[] = []
+      const providerMap = new Map<string, ProviderProfileRecord | null>()
+      for (let offset = 0; offset < scanTotal; offset += batchSize) {
+        const rawTasks = app.db.listTaskPageLight({ ...baseInput, limit: batchSize, offset })
+        if (!rawTasks.length) break
         const taskIds = rawTasks.map((task) => task.id)
         const images = app.db.listTaskImagesForTasks(taskIds)
         const imagesByTaskId = new Map<string, typeof images>()
@@ -455,9 +467,9 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
         const providerIds = Array.from(new Set(
           rawTasks.map((task) => task.providerProfileId).filter((value): value is string => Boolean(value)),
         ))
-        const providerMap = new Map(
-          providerIds.map((providerId) => [providerId, app.db.getProviderProfile(providerId) ?? null] as const),
-        )
+        for (const providerId of providerIds) {
+          if (!providerMap.has(providerId)) providerMap.set(providerId, app.db.getProviderProfile(providerId) ?? null)
+        }
         const searchableTasks = rawTasks.map((row) => toSearchableTask(
           row,
           imagesByTaskId.get(row.id) ?? [],
@@ -474,17 +486,19 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
             auth.role,
           ))
           .map((row) => row.id)
-        total = filteredIds.length
-        const start = (query.page - 1) * query.pageSize
-        const pageIds = filteredIds.slice(start, start + query.pageSize)
-        if (pageIds.length > 0) {
-          const fullRows = app.db.listTaskPageByIds(pageIds)
-          const rowById = new Map(fullRows.map((task) => [task.id, task] as const))
-          const orderedRows = pageIds
-            .map((id) => rowById.get(id))
-            .filter((task): task is NonNullable<typeof task> => Boolean(task))
-          items = serializeTaskList(orderedRows, auth.role === 'admin', auth.role === 'admin')
+        for (const id of filteredIds) {
+          if (total >= start && pageIds.length < query.pageSize) pageIds.push(id)
+          total++
         }
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      if (pageIds.length > 0) {
+        const fullRows = app.db.listTaskPageByIds(pageIds)
+        const rowById = new Map(fullRows.map((task) => [task.id, task] as const))
+        const orderedRows = pageIds
+          .map((id) => rowById.get(id))
+          .filter((task): task is NonNullable<typeof task> => Boolean(task))
+        items = serializeTaskList(orderedRows, auth.role === 'admin', auth.role === 'admin')
       }
     } else {
       total = app.db.countTaskPage(baseInput)
@@ -609,6 +623,93 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
     })
   })
 
+  app.get('/api/tasks/failed', async (request, reply) => {
+    const auth = await requireAuth(app, request, reply)
+    const query = z.object({ showUsageCodeTasksForAdmin: z.enum(['1', 'true']).optional() }).parse(request.query)
+    return {
+      taskIds: app.db.listFailedTaskIds({
+        ownerUsageCodeIds: auth.role === 'user' && auth.usageCodeId ? [auth.usageCodeId] : auth.role === 'user' ? [] : undefined,
+        includeUsageCodeTasksForAdmin: auth.role === 'user' || Boolean(query.showUsageCodeTasksForAdmin),
+      }),
+    }
+  })
+
+  app.post('/api/tasks/failed/clear/start', async (request, reply) => {
+    const auth = await requireAuth(app, request, reply)
+    expireCleanupLease()
+    if (failedCleanup) return cleanupBusy(reply)
+    const token = crypto.randomUUID()
+    failedCleanup = { token, sessionId: auth.sessionId, running: false, expiresAt: Date.now() + cleanupLeaseMs }
+    return { cleanupToken: token }
+  })
+
+  app.post('/api/tasks/failed/clear/finish', async (request, reply) => {
+    const auth = await requireAuth(app, request, reply)
+    const body = z.object({ cleanupToken: z.string().uuid() }).strict().parse(request.body)
+    expireCleanupLease()
+    if (!failedCleanup) return { ok: true }
+    if (failedCleanup.sessionId !== auth.sessionId || failedCleanup.token !== body.cleanupToken || failedCleanup.running) return cleanupBusy(reply)
+    failedCleanup = null
+    return { ok: true }
+  })
+
+  app.post('/api/tasks/failed/clear', async (request, reply) => {
+    const auth = await requireAuth(app, request, reply)
+    const body = z.object({
+      taskIds: z.array(z.string().uuid()).min(1).max(200),
+      showUsageCodeTasksForAdmin: z.boolean().default(false),
+      cleanupToken: z.string().uuid().optional(),
+    }).strict().parse(request.body)
+    expireCleanupLease()
+    if (failedCleanup && (failedCleanup.running || failedCleanup.sessionId !== auth.sessionId || failedCleanup.token !== body.cleanupToken)) return cleanupBusy(reply)
+    if (!failedCleanup && body.cleanupToken) return reply.code(409).send({ message: '清理操作已过期，请重新确认' })
+    const oneShot = !failedCleanup
+    const lease = failedCleanup ?? { token: crypto.randomUUID(), sessionId: auth.sessionId, running: false, expiresAt: Date.now() + cleanupLeaseMs }
+    failedCleanup = lease
+    lease.running = true
+    const deletedTaskIds: string[] = []
+    try {
+      for (const taskId of new Set(body.taskIds)) {
+        const deleted = app.db.sqlite.transaction(() => {
+          const task = app.db.getTaskCleanupAccess(taskId)
+          if (!task || task.status !== 'failed' || !canAccessTask(auth, task)) return null
+          if (auth.role === 'user' && task.ownerUsageCodeId !== auth.usageCodeId) return null
+          if (auth.role === 'admin' && !body.showUsageCodeTasksForAdmin && task.ownerKind === 'usage_code') return null
+          const attachments = app.db.listTaskImages(taskId)
+          app.db.refundTaskQuota(taskId, 'task_deleted')
+          if (auth.role === 'user' && task.ownerUsageCodeId) {
+            app.db.insertUsageCodeActivityLog({
+              usageCodeId: task.ownerUsageCodeId, taskId, actorKind: 'user', eventType: 'task_deleted',
+              message: `使用码用户清除失败任务 ${taskId}`,
+            })
+          }
+          return app.db.deleteFailedTask(taskId)
+            ? { images: attachments, owner: { ownerKind: task.ownerKind, ownerUsageCodeId: task.ownerUsageCodeId } }
+            : null
+        }).immediate()
+        if (!deleted) continue
+        deletedTaskIds.push(taskId)
+        app.taskWorker.cancel(taskId)
+        app.taskEvents.emitDeleted(taskId, deleted.owner)
+        for (const image of deleted.images) {
+          // Shared file paths and hard links belonging to other tasks stay intact.
+          if (app.db.getTaskImageByFilePath(image.filePath.replace(/\\/g, '/'))) continue
+          await fs.rm(resolveAbsoluteMediaPath(app, image.filePath), { force: true }).catch((error) => {
+            request.log.warn({ err: error, taskId }, '清理失败任务附件失败')
+          })
+        }
+        await cleanupEmptyTaskMediaDirectories(app.config.mediaDir, taskId).catch((error) => {
+          request.log.warn({ err: error, taskId }, '清理失败任务空目录失败')
+        })
+      }
+      return { deletedTaskIds }
+    } finally {
+      lease.running = false
+      lease.expiresAt = Date.now() + cleanupLeaseMs
+      if (oneShot && failedCleanup === lease) failedCleanup = null
+    }
+  })
+
   app.delete('/api/tasks/:taskId', async (request, reply) => {
     const auth = await requireAuth(app, request, reply)
     const params = z.object({ taskId: z.string().uuid() }).parse(request.params)
@@ -631,7 +732,9 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
       })
     }
     app.taskWorker.cancel(params.taskId)
-    if (task.status !== 'succeeded') {
+    // Deleting an in-flight request does not undo the upstream charge.
+    // Refund only tasks that have not been submitted or have already failed/canceled.
+    if (task.status === 'queued' || task.status === 'failed' || task.status === 'canceled') {
       app.db.refundTaskQuota(params.taskId, 'task_deleted')
     }
     app.db.deleteTask(params.taskId)

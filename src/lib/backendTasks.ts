@@ -74,6 +74,33 @@ export async function deleteBackendTask(taskId: string): Promise<void> {
   await readResponseJson<{ ok: true }>(response)
 }
 
+export async function fetchFailedBackendTaskIds(showUsageCodeTasksForAdmin: boolean): Promise<string[]> {
+  const params = showUsageCodeTasksForAdmin ? '?showUsageCodeTasksForAdmin=1' : ''
+  const response = await appFetch(`/api/tasks/failed${params}`, { cache: 'no-store' })
+  return (await readResponseJson<{ taskIds: string[] }>(response)).taskIds
+}
+
+export async function startFailedBackendCleanup(): Promise<string> {
+  const response = await appFetch('/api/tasks/failed/clear/start', { method: 'POST' })
+  return (await readResponseJson<{ cleanupToken: string }>(response)).cleanupToken
+}
+
+export async function finishFailedBackendCleanup(cleanupToken: string): Promise<void> {
+  const response = await appFetch('/api/tasks/failed/clear/finish', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cleanupToken }),
+  })
+  await readResponseJson(response)
+}
+
+export async function clearFailedBackendTasks(taskIds: string[], showUsageCodeTasksForAdmin: boolean, cleanupToken: string): Promise<string[]> {
+  const response = await appFetch('/api/tasks/failed/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskIds, showUsageCodeTasksForAdmin, cleanupToken }),
+  })
+  return (await readResponseJson<{ deletedTaskIds: string[] }>(response)).deletedTaskIds
+}
+
 export async function updateBackendTaskFlags(
   taskId: string,
   patch: { isFavorite?: boolean; isArchived?: boolean },

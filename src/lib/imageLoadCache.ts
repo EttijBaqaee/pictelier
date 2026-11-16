@@ -7,6 +7,14 @@ const imageLoadCache = new Map<string, ImageLoadCacheEntry>()
 const imageLoadCacheById = new Map<string, ImageLoadCacheEntry>()
 const MAX_IMAGE_LOAD_CACHE_SIZE = 64
 
+function releaseUnreferencedObjectUrl(entry: ImageLoadCacheEntry | undefined) {
+  if (!entry?.ownsObjectUrl || !entry.displaySrc.startsWith('blob:')) return
+  // A URL may be shared by its source URL and image ID, including two viewers.
+  if ([...imageLoadCache.values(), ...imageLoadCacheById.values()]
+    .some((current) => current.displaySrc === entry.displaySrc)) return
+  URL.revokeObjectURL(entry.displaySrc)
+}
+
 function touchCacheEntry<T>(cache: Map<string, T>, key: string, entry: T) {
   cache.delete(key)
   cache.set(key, entry)
@@ -17,10 +25,8 @@ function evictCacheIfNeeded(cache: Map<string, ImageLoadCacheEntry>) {
     const oldestKey = cache.keys().next().value
     if (!oldestKey) break
     const entry = cache.get(oldestKey)
-    if (entry?.ownsObjectUrl && entry.displaySrc.startsWith('blob:')) {
-      URL.revokeObjectURL(entry.displaySrc)
-    }
     cache.delete(oldestKey)
+    releaseUnreferencedObjectUrl(entry)
   }
 }
 
@@ -32,10 +38,8 @@ function setCacheEntry(
 ) {
   if (!key || !displaySrc) return
   const existing = cache.get(key)
-  if (existing?.ownsObjectUrl && existing.displaySrc !== displaySrc && existing.displaySrc.startsWith('blob:')) {
-    URL.revokeObjectURL(existing.displaySrc)
-  }
   touchCacheEntry(cache, key, { displaySrc, ownsObjectUrl })
+  if (existing?.displaySrc !== displaySrc) releaseUnreferencedObjectUrl(existing)
   evictCacheIfNeeded(cache)
 }
 
@@ -76,17 +80,13 @@ export function setCachedLoadedImageById(imageId: string, displaySrc: string, ow
 export function releaseCachedLoadedImageSrc(src: string) {
   const entry = imageLoadCache.get(src)
   if (!entry) return
-  if (entry.ownsObjectUrl && entry.displaySrc.startsWith('blob:')) {
-    URL.revokeObjectURL(entry.displaySrc)
-  }
   imageLoadCache.delete(src)
+  releaseUnreferencedObjectUrl(entry)
 }
 
 export function releaseCachedLoadedImageById(imageId: string) {
   const entry = imageLoadCacheById.get(imageId)
   if (!entry) return
-  if (entry.ownsObjectUrl && entry.displaySrc.startsWith('blob:')) {
-    URL.revokeObjectURL(entry.displaySrc)
-  }
   imageLoadCacheById.delete(imageId)
+  releaseUnreferencedObjectUrl(entry)
 }

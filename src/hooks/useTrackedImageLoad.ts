@@ -59,7 +59,11 @@ export function useTrackedImageLoad(
   useEffect(() => {
     const cleanupOwnedObjectUrl = () => {
       if (!objectUrlRef.current || !ownsObjectUrlRef.current) return
-      URL.revokeObjectURL(objectUrlRef.current)
+      const cachedBySrc = src ? peekCachedLoadedImageSrc(src) : null
+      const cachedById = imageId ? peekCachedLoadedImageById(imageId) : null
+      if (cachedBySrc !== objectUrlRef.current && cachedById !== objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current)
+      }
       objectUrlRef.current = null
       ownsObjectUrlRef.current = false
     }
@@ -156,8 +160,16 @@ export function useTrackedImageLoad(
         if (cancelled) return
 
         const objectUrl = URL.createObjectURL(blob)
-        await decodeImageUrl(objectUrl)
-        if (cancelled) return
+        try {
+          await decodeImageUrl(objectUrl)
+        } catch (error) {
+          URL.revokeObjectURL(objectUrl)
+          throw error
+        }
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl)
+          return
+        }
         finish(objectUrl, true)
       } catch {
         if (cancelled || abortController.signal.aborted) return

@@ -36,12 +36,17 @@ export default function ConfirmDialog() {
     >
       <div className="glass-overlay absolute inset-0 animate-overlay-in" />
       <div
-        className="glass-surface-strong relative border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] max-w-sm w-full p-6 z-10 ring-1 ring-black/5 dark:ring-white/10 animate-confirm-in"
+        className="glass-surface-strong relative border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] max-h-[calc(100dvh-2rem)] overflow-y-auto max-w-sm w-full p-6 z-10 ring-1 ring-black/5 dark:ring-white/10 animate-confirm-in"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-base font-bold text-gray-800 dark:text-gray-100 mb-2">
           {confirmDialog.title}
         </h3>
+        {confirmDialog.warning ? (
+          <p role="note" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium leading-relaxed text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {confirmDialog.warning}
+          </p>
+        ) : null}
         <p className={`text-sm text-gray-500 dark:text-gray-400 mb-6 leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}>
           {confirmDialog.message}
         </p>

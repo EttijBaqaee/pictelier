@@ -2,9 +2,10 @@ import { normalizeReferenceImageMode } from './referenceImageMode.js'
 import type { ImageRequestParams } from './imageCapabilities.js'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import { decryptText } from './crypto.js'
 import { createPublicReferenceImageUrl } from './publicReferenceImages.js'
-import type { AppDatabase } from './db.js'
+import type { AppDatabase, TaskRecord } from './db.js'
 import { executeImageTask, writeOutputImage, writeOutputImageThumbnail, type GeneratedImageResult } from './imageApi.js'
 import { recoverKieTaskOutputs } from './kieApi.js'
 import { buildKieUpstreamUsageJson } from './kieFailedTaskRecover.js'
@@ -162,6 +163,21 @@ export class TaskWorker {
     return true
   }
 
+  private finishImageTask(task: TaskRecord, count: number, recovered = false) {
+    // Commit completion and usage statistics together, including restart recovery.
+    this.db.sqlite.transaction(() => {
+      if (this.isTaskInactive(task.id) || this.db.getTaskCleanupAccess(task.id)?.status === 'succeeded') return
+      if (task.ownerKind === 'usage_code' && task.ownerUsageCodeId) {
+        this.db.recordUsageCodeOutputImages({ usageCodeId: task.ownerUsageCodeId, count })
+        this.db.insertUsageCodeActivityLog({
+          usageCodeId: task.ownerUsageCodeId, taskId: task.id, actorKind: 'user', eventType: 'image_task_succeeded',
+          message: `使用码用户生成图片 ${count} 张${recovered ? '（任务恢复）' : ''}`,
+        })
+      }
+      this.emit(task.id, { status: 'succeeded', step: 'succeeded', percent: 100, message: `生成完成，共 ${count} 张图片` })
+    }).immediate()
+  }
+
   private async process(taskId: string) {
     const task = this.db.getTask(taskId)
     if (!task) return
@@ -188,6 +204,41 @@ export class TaskWorker {
     let outputDir = path.join(this.config.outputsDir, taskId)
 
     try {
+      const params = JSON.parse(task.paramsJson) as ImageRequestParams
+      const storedImages = this.db.listTaskImages(taskId)
+      const storedOutputs = storedImages.filter((image) => image.kind === 'output')
+      // A crash can occur after output commit but before thumbnail/completion.
+      // Recover complete, verified outputs instead of submitting them again.
+      if (['submitted', 'processing', 'downloading'].includes(task.status) && storedOutputs.length >= params.n) {
+        const verified: Array<{ record: typeof storedOutputs[number]; image: GeneratedImageResult }> = []
+        for (const record of storedOutputs) {
+          const buffer = await fs.readFile(path.join(this.config.mediaDir, record.filePath)).catch(() => null)
+          if (!buffer || buffer.length !== record.bytes || crypto.createHash('sha256').update(buffer).digest('hex') !== record.sha256) break
+          verified.push({ record, image: { buffer, mimeType: record.mimeType } })
+        }
+        if (verified.length === storedOutputs.length) {
+          for (const { record, image } of verified) {
+            if (this.isTaskInactive(taskId)) return
+            const thumbnailRecord = storedImages.find((candidate) => {
+              if (candidate.kind !== 'thumb') return false
+              try { return JSON.parse(candidate.metadataJson ?? '{}').imageId === record.id } catch { return false }
+            })
+            if (thumbnailRecord && await fs.stat(path.join(this.config.mediaDir, thumbnailRecord.filePath)).then((stat) => stat.isFile() && stat.size === thumbnailRecord.bytes, () => false)) continue
+            const thumbnail = await writeOutputImageThumbnail(path.join(this.config.thumbsDir, taskId), record.id, image)
+            if (this.isTaskInactive(taskId)) return
+            this.db.sqlite.transaction(() => {
+              if (thumbnailRecord) this.db.sqlite.prepare('DELETE FROM task_images WHERE id = ?').run(thumbnailRecord.id)
+              if (!this.db.addTaskImage({
+                id: crypto.randomUUID(), taskId, kind: 'thumb', filePath: path.join('thumbs', taskId, thumbnail.fileName),
+                mimeType: thumbnail.mimeType, bytes: thumbnail.bytes, sha256: thumbnail.sha256,
+                width: thumbnail.width, height: thumbnail.height, metadataJson: JSON.stringify({ imageId: record.id }),
+              })) throw new Error('恢复缩略图失败')
+            }).immediate()
+          }
+          this.finishImageTask(task, storedOutputs.length, true)
+          return
+        }
+      }
       const inputImages = this.db.listTaskImages(taskId).filter((image) => image.kind === 'input')
       const maskImage = this.db.listTaskImages(taskId).find((image) => image.kind === 'mask') ?? null
       apiKey = decryptText(provider.apiKeyEncrypted, this.config.appSecret)
@@ -195,7 +246,6 @@ export class TaskWorker {
       if (!this.emit(taskId, { status: 'submitted', step: 'submitted', percent: 35, message: '已提交到上游接口' })) return
       if (!this.emit(taskId, { status: 'processing', step: 'processing', percent: 60, message: '正在生成图片' })) return
 
-      const params = JSON.parse(task.paramsJson) as ImageRequestParams
       const shouldPersistIncrementally = params.n > 1
       outputDir = path.join(this.config.outputsDir, taskId)
       const outputPersistQueue = createOutputImagePersistQueue<GeneratedImageResult>({
@@ -354,20 +404,7 @@ export class TaskWorker {
       assertAllOutputImagesPersisted(outputPersistQueue.getPersistedCount(), images.length)
 
       if (this.isTaskInactive(taskId)) return
-      if (task.ownerKind === 'usage_code' && task.ownerUsageCodeId) {
-        this.db.recordUsageCodeOutputImages({
-          usageCodeId: task.ownerUsageCodeId,
-          count: images.length,
-        })
-        this.db.insertUsageCodeActivityLog({
-          usageCodeId: task.ownerUsageCodeId,
-          taskId,
-          actorKind: 'user',
-          eventType: 'image_task_succeeded',
-          message: `使用码用户生成图片 ${images.length} 张`,
-        })
-      }
-      this.emit(taskId, { status: 'succeeded', step: 'succeeded', percent: 100, message: `生成完成，共 ${images.length} 张图片` })
+      this.finishImageTask(task, images.length)
     } catch (error) {
       if (this.isTaskInactive(taskId)) return
 
@@ -437,26 +474,7 @@ export class TaskWorker {
           await recoverPersistQueue.waitForIdle()
           assertAllOutputImagesPersisted(recoverPersistQueue.getPersistedCount(), recoveredImages.length)
 
-          if (task.ownerKind === 'usage_code' && task.ownerUsageCodeId) {
-            this.db.recordUsageCodeOutputImages({
-              usageCodeId: task.ownerUsageCodeId,
-              count: recoveredImages.length,
-            })
-            this.db.insertUsageCodeActivityLog({
-              usageCodeId: task.ownerUsageCodeId,
-              taskId,
-              actorKind: 'user',
-              eventType: 'image_task_succeeded',
-              message: `使用码用户生成图片 ${recoveredImages.length} 张（上游任务恢复）`,
-            })
-          }
-
-          this.emit(taskId, {
-            status: 'succeeded',
-            step: 'succeeded',
-            percent: 100,
-            message: `生成完成，共 ${recoveredImages.length} 张图片`,
-          })
+          this.finishImageTask(task, recoveredImages.length, true)
           return
         } catch (recoverError) {
           if (this.isTaskInactive(taskId)) return
