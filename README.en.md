@@ -1,4 +1,4 @@
-# Pictelier · 0.3.66.11
+# Pictelier · 0.3.66.12
 
 [![简体中文](https://img.shields.io/badge/简体中文-Readme-lightgrey)](README.md) [![English](https://img.shields.io/badge/English-Current-blue)](README.en.md)
 
@@ -13,11 +13,18 @@ Pictelier (绘坊) is an AI creative workspace that stores generated images on y
 
 **Quick navigation**
 
-- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-11) · [AI scripting guide (Chinese)](agent.md)
+- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-12) · [AI scripting guide (Chinese)](agent.md)
 - **Deploy:** [Docker](#section-2) · [1Panel](#section-3)
 - **Configure:** [Paths and proxies](#section-4) · [Providers](#section-5) · [Environment variables](#section-8)
 - **Use and maintain:** [Appearance](#section-6) · [Tasks and data](#section-7) · [Backups](#section-9) · [Troubleshooting](#section-10)
 - **Legal:** [License](#section-11) · [Privacy](#section-12) · [Disclaimer](#section-13)
+
+<a id="release-0-3-66-12"></a>
+
+## What changes in 0.3.66.12
+
+- **Reference image size handling:** fixes pixel variation incorrectly rejecting efficiently compressed inputs such as WebP and AVIF. Encoding first preserves dimensions and stays close to the source size where possible. If output still exceeds 2 MiB, the transmitted copy is automatically scaled down proportionally before variation, preserving transparency and the existing encoding quality floor. Original files remain unchanged.
+- **Public reference preparation:** automatically compresses and varies the exact reference before submitting its URL upstream, avoiding encoding failures when the upstream fetches it. Masks and markup layers stay aligned when resizing is needed. Repeated downloads of a URL remain consistent, while each submission and retry uses a separate variant. Direct reference uploads use the same corrected size handling.
 
 <a id="release-0-3-66-11"></a>
 
@@ -109,7 +116,7 @@ docker compose pull app
 docker compose up -d
 ```
 
-Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.11` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
+Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.12` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
 
 For offline installation, load the release archive with `docker load -i <archive.tar.gz>`, then use its image tag in Compose. Release downloads are available on the [releases page](https://github.com/EttijBaqaee/pictelier/releases).
 
@@ -118,7 +125,7 @@ For offline installation, load the release archive with `docker load -i <archive
 Clone or download the desired version, then configure the build template:
 
 ```bash
-git clone --branch v0.3.66.11 https://github.com/EttijBaqaee/pictelier.git
+git clone --branch v0.3.66.12 https://github.com/EttijBaqaee/pictelier.git
 cd pictelier/deploy
 cp .env.example .env
 # Edit .env and set APP_SECRET, ADMIN_PASSWORD, and APP_DATA_DIR before starting.

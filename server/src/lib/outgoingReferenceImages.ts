@@ -206,28 +206,31 @@ async function transformReferenceImage(source: Buffer, mimeType: string, mode: R
   if (mimeType === 'image/svg+xml') throw new Error('SVG 参考图请使用原版或无损方案；轻微像素扰动需先转换为位图')
   if (mimeType === 'image/png' && isAnimatedPng(source)) throw new Error('APNG 参考图请使用原版或无损方案，避免丢失动画帧')
   if (mimeType === 'image/avif' && (metadata.pages && metadata.pages > 1 || source.subarray(8, 64).includes(Buffer.from('avis')))) throw new Error('动画 AVIF 请使用原版或无损方案，避免丢失动画帧')
-  const { data, info } = await sharp(source, { animated: true }).toColourspace('srgb').ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  let { data, info } = await sharp(source, { animated: true }).toColourspace('srgb').ensureAlpha().raw().toBuffer({ resolveWithObject: true })
   const noise = crypto.createHash('sha256').update(seed).digest()
-  // RGB only; alpha and fully transparent pixels stay intact. Always start from the original.
-  for (let pixel = 0; pixel < info.width * info.height; pixel++) {
-    if (!data[pixel * 4 + 3]) continue
-    const channel = noise[pixel % noise.length] % 3
-    const offset = pixel * 4 + channel
-    const value = data[offset]
-    data[offset] = value === 0 ? 1 : value === 255 ? 254 : value + (noise[(pixel + 7) % noise.length] & 1 ? 1 : -1)
+  const perturbPixels = () => {
+    // RGB only; alpha and fully transparent pixels stay intact.
+    for (let pixel = 0; pixel < info.width * info.height; pixel++) {
+      if (!data[pixel * 4 + 3]) continue
+      const channel = noise[pixel % noise.length] % 3
+      const offset = pixel * 4 + channel
+      const value = data[offset]
+      data[offset] = value === 0 ? 1 : value === 255 ? 254 : value + (noise[(pixel + 7) % noise.length] & 1 ? 1 : -1)
+    }
   }
+  perturbPixels()
   const pages = metadata.pages || 1
   const pipeline = () => {
-    let image = sharp(data, { raw: { width: info.width, height: info.height, channels: 4, ...(pages > 1 ? { pageHeight: metadata.pageHeight } : {}) } })
+    let image = sharp(data, { raw: { width: info.width, height: info.height, channels: 4, ...(pages > 1 ? { pageHeight: info.height / pages } : {}) } })
     if (metadata.orientation) image = image.withMetadata({ orientation: metadata.orientation })
     return image
   }
   // Apply the size budget to the final transmitted bytes, including the nonce.
-  // Small files have a 16 KiB floor for container overhead. Never inflate a
-  // compressed photo back into a large lossless raster or silently resize it.
+  // Prefer the source byte size, with a 16 KiB floor for container overhead.
+  // Try encoding at the original dimensions before reducing the transmitted copy.
   const maxBytes = Math.max(16 * 1024, Math.min(source.length, 2 * 1024 * 1024))
-  const encode = async (lossless: boolean, quality = 84) => varyFile(await pipeline().webp({
-    lossless, quality, effort: 0, alphaQuality: 100, loop: metadata.loop, delay: metadata.delay,
+  const encode = async (lossless: boolean, quality = 84, effort = 0) => varyFile(await pipeline().webp({
+    lossless, quality, effort, alphaQuality: 100, loop: metadata.loop, delay: metadata.delay,
   }).toBuffer(), 'image/webp', seed)
   // Lossless is cheap for small/flat images and preserves the exact RGB deltas.
   // Large photographic inputs go straight to bounded lossy encoding.
@@ -236,26 +239,79 @@ async function transformReferenceImage(source: Buffer, mimeType: string, mode: R
     if (output.length <= maxBytes) return { buffer: output, mimeType: 'image/webp' }
   }
   let smallestOutput: Buffer | undefined
+  let boundedOutput: Buffer | undefined
+  const hardMaxBytes = 2 * 1024 * 1024
   for (const quality of [84, 80, 76, 72]) {
     const output = await encode(false, quality)
     if (output.length <= maxBytes) return { buffer: output, mimeType: 'image/webp' }
+    if (!boundedOutput && output.length <= hardMaxBytes) boundedOutput = output
     if (!smallestOutput || output.length < smallestOutput.length) smallestOutput = output
   }
-  // A format change can need a little container/codec overhead even when its
-  // visible content is unchanged. Allow at most 5%, never beyond 2 MiB, rather
-  // than lowering the quality floor or randomly failing near the size budget.
+  // Prefer a small increase over lowering quality further. This is a preferred
+  // size target; the hard 2 MiB ceiling below also permits efficient source codecs.
   const toleratedBytes = Math.max(16 * 1024, Math.min(Math.ceil(source.length * 1.05), 2 * 1024 * 1024))
   if (smallestOutput && smallestOutput.length <= toleratedBytes) return { buffer: smallestOutput, mimeType: 'image/webp' }
-  throw new Error('像素扰动后的参考图无法压入体积上限，请先压缩参考图或选择无损文件扰动方案')
+  // An efficiently compressed source (notably AVIF, WebP or a palette PNG)
+  // is not a viable byte target for a different encoding. Keep the preferred
+  // source-size budget above, but permit codec overhead within the same 2 MiB
+  // upload ceiling rather than failing an otherwise valid reference.
+  if (boundedOutput) return { buffer: boundedOutput, mimeType: 'image/webp' }
+  // Spend more encoder effort only for references that still exceed the hard
+  // ceiling. Preserve dimensions, alpha and the existing quality floor first.
+  for (const quality of [84, 80, 76, 72]) {
+    const output = await encode(false, quality, 4)
+    if (output.length <= hardMaxBytes) return { buffer: output, mimeType: 'image/webp' }
+    if (!smallestOutput || output.length < smallestOutput.length) smallestOutput = output
+  }
+  // Incompressible references must remain usable. Resize from the untouched
+  // source, then apply the seeded RGB variation at the new size. Never resize
+  // an already perturbed/re-encoded copy or lower the existing quality floor.
+  // A fixed seed also keeps public downloads deterministic after this fallback.
+  const originalWidth = info.width, originalHeight = info.height / pages
+  let width = originalWidth, height = originalHeight
+  while (width > 1 || height > 1) {
+    const scale = Math.min(0.9, Math.sqrt(hardMaxBytes / (smallestOutput?.length || hardMaxBytes)) * 0.95)
+    const ratio = Math.max(width, height) - 1
+    const fit = Math.min(scale, ratio / Math.max(width, height))
+    width = Math.max(1, Math.floor(width * fit))
+    height = Math.max(1, Math.floor(height * fit))
+    // Calculate both edges from the same source aspect ratio on every pass.
+    const sourceScale = Math.min(width / originalWidth, height / originalHeight)
+    width = Math.max(1, Math.round(originalWidth * sourceScale))
+    height = Math.max(1, Math.round(originalHeight * sourceScale))
+    const resized = await sharp(source, { animated: true }).resize(width, height, { fit: 'fill' }).toColourspace('srgb').ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    data = resized.data
+    info = resized.info
+    perturbPixels()
+    smallestOutput = undefined
+    for (const quality of [84, 80, 76, 72]) {
+      const output = await encode(false, quality, 4)
+      if (output.length <= hardMaxBytes) return { buffer: output, mimeType: 'image/webp' }
+      if (!smallestOutput || output.length < smallestOutput.length) smallestOutput = output
+    }
+  }
+  throw new Error('参考图动画或元数据过大，自动压缩后仍无法传输，请减少帧数或元数据')
 }
 
 export async function varyReferenceImage(source: Buffer, mimeType: string, mode: ReferenceImageMode, seed = crypto.randomBytes(32)) {
   return withReferenceProcessing(() => transformReferenceImage(source, mimeType, mode, seed))
 }
 
-export async function readOutgoingReference(image: { filePath: string; mimeType: string }, mode: unknown, seed = crypto.randomBytes(32)) {
+export type ReferenceDimensions = { width: number; height: number }
+
+export async function alignReferenceMask(buffer: Buffer, reference: Buffer) {
   return withReferenceProcessing(async () => {
-    const result = await transformReferenceImage(await fs.readFile(image.filePath), image.mimeType, normalizeReferenceImageMode(mode), seed)
+    const [mask, input] = await Promise.all([sharp(buffer).metadata(), sharp(reference).metadata()])
+    if (mask.width === input.width && mask.height === input.height) return buffer
+    return sharp(buffer).resize(input.width, input.height, { fit: 'fill' }).png().toBuffer()
+  })
+}
+
+export async function readOutgoingReference(image: { filePath: string; mimeType: string; dimensions?: ReferenceDimensions }, mode: unknown, seed = crypto.randomBytes(32)) {
+  return withReferenceProcessing(async () => {
+    let source: Buffer = await fs.readFile(image.filePath)
+    if (image.dimensions) source = await sharp(source).resize(image.dimensions.width, image.dimensions.height, { fit: 'fill' }).png().toBuffer()
+    const result = await transformReferenceImage(source, image.dimensions ? 'image/png' : image.mimeType, normalizeReferenceImageMode(mode), seed)
     return { ...result, fileName: `${crypto.randomUUID()}.${referenceExtension(result.mimeType)}` }
   })
 }

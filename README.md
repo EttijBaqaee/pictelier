@@ -1,4 +1,4 @@
-# 绘坊 · Pictelier · 0.3.66.11
+# 绘坊 · Pictelier · 0.3.66.12
 
 [![简体中文](https://img.shields.io/badge/简体中文-当前页面-blue)](README.md) [![English](https://img.shields.io/badge/English-Readme-lightgrey)](README.en.md)
 
@@ -13,11 +13,18 @@
 
 **快速导航**
 
-- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-11) · [AI 脚本使用指南](agent.md)
+- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-12) · [AI 脚本使用指南](agent.md)
 - **部署**：[Docker](#section-2) · [1Panel](#section-5) · [离线镜像](#section-10)
 - **配置**：[编排文件](#section-3) · [环境变量](#section-4) · [端口与路径](#section-7) · [Nginx 反代](#section-8)
 - **维护**：[更新与备份](#section-11) · [常见问题](#section-12)
 - **项目条款**：[开源许可](#section-13) · [隐私政策](#section-14) · [免责声明](#section-15)
+
+<a id="release-0-3-66-12"></a>
+
+## 0.3.66.12 更新说明
+
+- **参考图体积处理**：修复高压缩率 WebP、AVIF 等输入在轻微像素扰动后被错误拒绝的问题。优先保留尺寸并贴近原文件体积；仍超过 2 MiB 时自动等比压缩传输副本，再生成扰动，保留透明度和现有编码质量下限。原始文件不变。
+- **公网参考图预处理**：向上游提交前先完成该链接对应副本的自动压缩和扰动处理，避免上游取图时才出现编码失败。需要缩小时，遮罩和标注层同步对齐。同一链接重复取图保持一致，每次提交和重试仍使用独立副本；直接上传参考图同步使用修正后的体积处理。
 
 <a id="release-0-3-66-11"></a>
 
@@ -102,12 +109,12 @@
 服务器只需 Docker Engine 和 Docker Compose v2，可直接拉取绘坊的镜像，无需安装 Node.js 或在宿主机编译：
 
 ```bash
-docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.11
+docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.12
 # 跟随绘坊的最新发布版本
 docker pull ghcr.io/ettijbaqaee/pictelier:latest
 ```
 
-正式部署建议固定 `0.3.66.11`。本次发布镜像为 **Linux amd64**，应用使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
+正式部署建议固定 `0.3.66.12`。本次发布镜像为 **Linux amd64**，应用使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
 
 ### 持久化数据目录
 
@@ -120,12 +127,12 @@ docker pull ghcr.io/ettijbaqaee/pictelier:latest
 只有需要自行构建时才需要 Git，以及访问基础镜像、npm 和 Debian 软件源：
 
 ```bash
-git clone --branch v0.3.66.11 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
+git clone --branch v0.3.66.12 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
 cd /opt/pictelier/deploy
 cp .env.example .env
 ```
 
-也可以从 [0.3.66.11 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.11) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
+也可以从 [0.3.66.12 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.12) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
 
 标准源码构建使用 `deploy/Dockerfile`，依赖安装、前端编译和后端编译都在 Docker 内完成。`deploy/Dockerfile.1panel` 是已有 Linux 锁定依赖缓存环境的构建文件，不能直接用于没有 `node_modules` 的干净源码；首次部署请使用标准 `deploy/Dockerfile`。
 
@@ -146,7 +153,7 @@ name: pictelier # 可选：编排项目名；同一服务器部署多套时使�
 services:
   app:
     # 镜像：推荐固定此版本；可按需改为绘坊的其他已发布标签。
-    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.11
+    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.12
     # 可选：本机没有镜像时才拉取；升级时主动执行 docker compose pull app。
     pull_policy: if_not_present
     container_name: pictelier # 可选：容器名；部署多套时必须各不相同。
@@ -320,7 +327,7 @@ location ^~ /r/references/ {
 
 1. 确定专用持久化目录；留空 `APP_DATA_DIR` 时使用编排项目内的 `./docker-data`，首次启动会自动创建并准备写权限。
 2. 进入 **容器 → 编排 → 创建编排**，选择编辑编排，名称填写 `pictelier`。
-3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.11`。
+3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.12`。
 4. 在编排环境变量中填写第 3 节参数，替换 `APP_SECRET` 和 `ADMIN_PASSWORD`。`APP_DATA_DIR` 可留空使用项目内默认目录，也可填写实际数据目录的绝对路径。六项路径按第 6 节分别填写或留空。
 5. 创建并启动，面板会拉取镜像并创建容器，不需要下载源码或现场编译。
 6. 容器健康状态变为 `healthy` 后，按 `APP_PORT` 和 `APP_BASE_PATH` 访问。推荐再按第 7 节配置 Nginx/HTTPS。
@@ -330,7 +337,7 @@ location ^~ /r/references/ {
 下载源码到服务器（例如 `/opt/pictelier`），在环境变量中设置 `APP_SOURCE_DIR=/opt/pictelier`，并把主编排中的 `image` / `pull_policy` 改为下面内容，同时加入 `build`：
 
 ```yaml
-image: pictelier:0.3.66.11
+image: pictelier:0.3.66.12
 pull_policy: never
 build:
   context: ${APP_SOURCE_DIR}
@@ -367,7 +374,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml build app
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
-该模式使用本地镜像名 `pictelier:0.3.66.11`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
+该模式使用本地镜像名 `pictelier:0.3.66.12`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
 
 <a id="section-7"></a>
 
@@ -718,17 +725,17 @@ nginx -t && nginx -s reload
 
 ## 9. 离线镜像（可选）
 
-Release 中的 `pictelier-0.3.66.11-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
+Release 中的 `pictelier-0.3.66.12-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
-docker load -i pictelier-0.3.66.11-amd64.tar.gz
+docker load -i pictelier-0.3.66.12-amd64.tar.gz
 ```
 
 使用离线镜像时，将主编排的 `image` 和 `pull_policy` 改为下面内容；如果之前添加过 `build`，同时删除整个 `build` 块：
 
 ```yaml
-image: pictelier:0.3.66.11
+image: pictelier:0.3.66.12
 pull_policy: never
 ```
 

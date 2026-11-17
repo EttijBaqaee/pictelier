@@ -4,7 +4,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import { decryptText } from './crypto.js'
-import { createPublicReferenceImageUrl } from './publicReferenceImages.js'
+import { preparePublicReferenceImageUrl } from './publicReferenceImages.js'
 import type { AppDatabase, TaskRecord } from './db.js'
 import { executeImageTask, writeOutputImage, writeOutputImageThumbnail, type GeneratedImageResult } from './imageApi.js'
 import { recoverKieTaskOutputs } from './kieApi.js'
@@ -315,10 +315,10 @@ export class TaskWorker {
         },
         apiKey,
         {
-          publicReferenceImageUrl: (image) => createPublicReferenceImageUrl(
-            { appSecret: this.config.appSecret, referenceBasePath: this.config.referenceBasePath ?? '' }, runtimeProvider,
+          publicReferenceImageUrl: (image, matchReferenceUrl) => preparePublicReferenceImageUrl(
+            { appSecret: this.config.appSecret, referenceBasePath: this.config.referenceBasePath ?? '', mediaDir: this.config.mediaDir }, runtimeProvider,
             path.relative(this.config.mediaDir, image.filePath).split(path.sep).join('/'),
-            { mode: runtimeProvider.referenceImageMode, mimeType: image.mimeType, mask: image.filePath === (maskImage ? path.join(this.config.mediaDir, maskImage.filePath) : '') },
+            { mode: runtimeProvider.referenceImageMode, mimeType: image.mimeType, mask: image.filePath === (maskImage ? path.join(this.config.mediaDir, maskImage.filePath) : ''), matchReferenceUrl },
           ),
           onUpstreamRequestId: (requestId) => {
             this.db.updateTaskProgress({

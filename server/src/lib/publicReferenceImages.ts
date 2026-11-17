@@ -1,5 +1,5 @@
 import { normalizeReferenceImageMode, type ReferenceImageMode } from './referenceImageMode.js'
-import { readOutgoingReference, referenceExtension, outgoingReferenceMime } from './outgoingReferenceImages.js'
+import { readOutgoingReference, referenceExtension, outgoingReferenceMime, type ReferenceDimensions } from './outgoingReferenceImages.js'
 import crypto from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
@@ -73,7 +73,7 @@ function isReferenceFilePath(filePath: string) {
   return !filePath.includes('\\') && !filePath.includes('\0') && !filePath.split('/').some(part => !part || part === '.' || part === '..')
     && /^(uploads|masks)\//.test(filePath)
 }
-type Variant = { filePath: string; mimeType: string; mode: ReferenceImageMode; seed: string }
+type Variant = { filePath: string; mimeType: string; mode: ReferenceImageMode; seed: string; dimensions?: ReferenceDimensions }
 function variantKey(config: Config) {
   return crypto.createHash('sha256').update('public-reference-variant-v1\0').update(config.appSecret).digest()
 }
@@ -92,9 +92,10 @@ function decodeVariant(config: Config, route: string, token: string): Variant {
   decipher.setAuthTag(bytes.subarray(12, 28))
   const variant = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString()) as Variant
   if (!isReferenceFilePath(variant.filePath) || !/^[a-f0-9]{64}$/.test(variant.seed) || !['lossless', 'pixel'].includes(variant.mode)) throw new Error('Invalid variant')
+  if (variant.dimensions && (variant.mode !== 'lossless' || !variant.filePath.startsWith('masks/') || ![variant.dimensions.width, variant.dimensions.height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 16383))) throw new Error('Invalid variant')
   return variant
 }
-export function createPublicReferenceImageUrl(config: Config, provider: ProviderProfileRecord, filePath: string, options: { mode?: ReferenceImageMode; mimeType?: string; mask?: boolean } = {}) {
+export function createPublicReferenceImageUrl(config: Config, provider: ProviderProfileRecord, filePath: string, options: { mode?: ReferenceImageMode; mimeType?: string; mask?: boolean; dimensions?: ReferenceDimensions } = {}) {
   if (!provider.publicReferenceEnabled || !isPublicReferenceVerified(config, provider)) throw new Error('公网参考图配置尚未通过检测，请重新检测并保存该节点')
   if (!isReferenceFilePath(filePath)) {
     throw new Error('公网参考图只能引用当前任务的输入图片或遮罩')
@@ -107,11 +108,40 @@ export function createPublicReferenceImageUrl(config: Config, provider: Provider
   if (mode === 'original') return signedReferenceUrl(config, origin, filePath, provider.id, expires)
   const mimeType = options.mimeType || 'image/png'
   const effectiveMode = options.mask && mode === 'pixel' ? 'lossless' : mode
-  const outputMime = outgoingReferenceMime(mimeType, effectiveMode)
+  const outputMime = options.dimensions ? 'image/png' : outgoingReferenceMime(mimeType, effectiveMode)
   const route = `.variants/${crypto.randomUUID()}/${crypto.randomUUID()}.${referenceExtension(outputMime)}`
   const url = new URL(signedReferenceUrl(config, origin, route, provider.id, expires))
-  url.searchParams.set('ref_variant', encodeVariant(config, route, { filePath, mimeType, mode: effectiveMode, seed: crypto.randomBytes(32).toString('hex') }))
+  url.searchParams.set('ref_variant', encodeVariant(config, route, { filePath, mimeType, mode: effectiveMode, seed: crypto.randomBytes(32).toString('hex'), ...(options.dimensions ? { dimensions: options.dimensions } : {}) }))
   return url.toString()
+}
+
+export async function preparePublicReferenceImageUrl(
+  config: Config & { mediaDir: string }, provider: ProviderProfileRecord, filePath: string,
+  options: Parameters<typeof createPublicReferenceImageUrl>[3] & { matchReferenceUrl?: string } = {},
+) {
+  if (options.mask && options.matchReferenceUrl && normalizeReferenceImageMode(options.mode ?? provider.referenceImageMode) === 'pixel') {
+    const reference = new URL(options.matchReferenceUrl)
+    const route = decodeURIComponent(reference.pathname.slice(`${config.referenceBasePath}/references/`.length))
+    if (!validReferenceSignature(config, reference, route, provider.id)) throw new Error('参考图链接无效或已过期')
+    const variant = decodeVariant(config, route, reference.searchParams.get('ref_variant') || '')
+    const output = await readOutgoingReference({ filePath: path.join(config.mediaDir, variant.filePath), mimeType: variant.mimeType }, variant.mode, Buffer.from(variant.seed, 'hex'))
+    const [input, original] = await Promise.all([sharp(output.buffer).metadata(), sharp(path.join(config.mediaDir, variant.filePath)).metadata()])
+    if (input.width !== original.width || input.height !== original.height) options = { ...options, dimensions: { width: input.width!, height: input.height! } }
+  }
+  const value = createPublicReferenceImageUrl(config, provider, filePath, options)
+  const url = new URL(value)
+  const token = url.searchParams.get('ref_variant')
+  if (token) {
+    const route = decodeURIComponent(url.pathname.slice(`${config.referenceBasePath}/references/`.length))
+    const variant = decodeVariant(config, route, token)
+    // Validate the exact seeded bytes before the upstream can incur a charge.
+    // Do not retain buffers: downloads regenerate the same immutable variant.
+    await readOutgoingReference({ filePath: path.join(config.mediaDir, variant.filePath), mimeType: variant.mimeType, dimensions: variant.dimensions }, variant.mode, Buffer.from(variant.seed, 'hex'))
+  } else {
+    const file = await stat(path.join(config.mediaDir, filePath))
+    if (!file.isFile()) throw new Error('参考图不存在')
+  }
+  return value
 }
 
 function publicReferenceProbe(config: Config, rawUrl: string): Buffer | null {
@@ -161,7 +191,7 @@ export const publicReferenceRoutes: FastifyPluginAsync = async app => {
       const key = relativePath + ':' + url.searchParams.get('ref_variant')
       let pending = pendingVariants.get(key)
       if (!pending) {
-        pending = readOutgoingReference({ filePath: path.join(app.config.mediaDir, variant.filePath), mimeType: variant.mimeType }, variant.mode, Buffer.from(variant.seed, 'hex'))
+        pending = readOutgoingReference({ filePath: path.join(app.config.mediaDir, variant.filePath), mimeType: variant.mimeType, dimensions: variant.dimensions }, variant.mode, Buffer.from(variant.seed, 'hex'))
           .finally(() => { pendingVariants.delete(key) })
         pendingVariants.set(key, pending)
       }

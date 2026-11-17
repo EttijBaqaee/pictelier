@@ -55,7 +55,7 @@ COPY --from=server-build /app/server/dist /app/server/dist
 COPY --from=server-build /app/server/package.json /app/server/package.json
 COPY --from=web-build /app/dist /app/dist
 COPY LICENSE NOTICE /app/
-LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.11" org.opencontainers.image.licenses="AGPL-3.0-only"
+LABEL org.opencontainers.image.title="Pictelier" org.opencontainers.image.source="https://github.com/EttijBaqaee/pictelier" org.opencontainers.image.version="0.3.66.12" org.opencontainers.image.licenses="AGPL-3.0-only"
 
 RUN mkdir -p /app/data && chown node:node /app/data
 COPY --chmod=755 deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

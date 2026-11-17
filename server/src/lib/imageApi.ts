@@ -1,4 +1,4 @@
-import { assertReferenceModeSupported, readOutgoingReference, withOutgoingReferenceRequest } from './outgoingReferenceImages.js'
+import { alignReferenceMask, assertReferenceModeSupported, readOutgoingReference, withOutgoingReferenceRequest } from './outgoingReferenceImages.js'
 import { imageExtensionError, imageExtensionFields, resolveImageCapabilities, type ImageRequestParams } from './imageCapabilities.js'
 import { prepareImageOutput } from './imageOutput.js'
 import fs from 'node:fs/promises'
@@ -43,7 +43,7 @@ export interface GeneratedImageResult {
 }
 
 export interface ExecuteImageTaskOptions {
-  publicReferenceImageUrl?: (image: TaskImageInput) => string
+  publicReferenceImageUrl?: (image: TaskImageInput, matchReferenceUrl?: string) => string | Promise<string>
 
   onImageComplete?: (completed: number, total: number) => void
   onImagesReady?: (
@@ -520,13 +520,15 @@ async function callImagesApi(
       if (!options.publicReferenceImageUrl) throw new Error('公网参考图链接生成器不可用')
     }
     if (payload.provider.publicReferenceEnabled && !payload.provider.grokApiCompat) {
+      const inputImageUrls = await Promise.all(payload.inputImages.map(image => options.publicReferenceImageUrl!(image)))
+      const maskImageUrl = payload.maskImage ? await options.publicReferenceImageUrl!(payload.maskImage, inputImageUrls[0]) : null
       const response = await fetchWithTimeout(buildApiUrl(payload.provider.baseUrl, 'images/edits'), {
         method: 'POST',
         headers: { ...buildHeaders(apiKey), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: payload.provider.model, prompt,
-          images: payload.inputImages.map(image => ({ image_url: options.publicReferenceImageUrl!(image) })),
-          ...(payload.maskImage ? { [payload.params.annotation_mode === 'markup' ? 'markup' : 'mask']: { image_url: options.publicReferenceImageUrl!(payload.maskImage) } } : {}),
+          images: inputImageUrls.map(image_url => ({ image_url })),
+          ...(maskImageUrl ? { [payload.params.annotation_mode === 'markup' ? 'markup' : 'mask']: { image_url: maskImageUrl } } : {}),
           ...imageExtensionFields(payload.params, payload.provider),
           size: payload.params.size, quality: payload.params.quality,
           output_format: payload.params.output_format, moderation: payload.params.moderation,
@@ -588,7 +590,7 @@ async function callImagesApi(
       }
 
       const inputImageUrls = payload.provider.publicReferenceEnabled
-        ? payload.inputImages.map((image) => options.publicReferenceImageUrl!(image))
+        ? await Promise.all(payload.inputImages.map((image) => options.publicReferenceImageUrl!(image)))
         : await Promise.all(payload.inputImages.map((image) => fileToDataUrl(image.filePath, image.mimeType, payload.provider.referenceImageMode)))
 
       const response = await fetchWithTimeout(
@@ -653,16 +655,19 @@ async function callImagesApi(
       formData.append('n', String(payload.params.n))
     }
 
+    let firstReference: Buffer | undefined
     for (let index = 0; index < payload.inputImages.length; index += 1) {
       const inputImage = payload.inputImages[index]
       const prepared = await readOutgoingReference(inputImage, payload.provider.referenceImageMode)
+      if (index === 0 && payload.maskImage && payload.provider.referenceImageMode === 'pixel') firstReference = prepared.buffer
       const fileName = !payload.provider.referenceImageMode || payload.provider.referenceImageMode === 'original' ? `input-${index + 1}.${inputImage.mimeType.split('/')[1] || 'png'}` : prepared.fileName
       formData.append('image[]', new Blob([Uint8Array.from(prepared.buffer)], { type: prepared.mimeType }), fileName)
     }
 
     if (payload.maskImage) {
-      const maskBuffer = await fs.readFile(payload.maskImage.filePath)
-      formData.append(payload.params.annotation_mode === 'markup' ? 'markup' : 'mask', new Blob([maskBuffer], { type: payload.maskImage.mimeType }), payload.params.annotation_mode === 'markup' ? 'markup.png' : 'mask.png')
+      const originalMask = await fs.readFile(payload.maskImage.filePath)
+      const maskBuffer = firstReference ? await alignReferenceMask(originalMask, firstReference) : originalMask
+      formData.append(payload.params.annotation_mode === 'markup' ? 'markup' : 'mask', new Blob([Uint8Array.from(maskBuffer)], { type: maskBuffer === originalMask ? payload.maskImage.mimeType : 'image/png' }), payload.params.annotation_mode === 'markup' ? 'markup.png' : 'mask.png')
     }
 
     const response = await fetchWithTimeout(
@@ -805,9 +810,14 @@ async function callResponsesApi(
     const inputImageDataUrls = await Promise.all(
       payload.inputImages.map((image) => fileToDataUrl(image.filePath, image.mimeType, payload.provider.referenceImageMode)),
     )
-    const maskDataUrl = payload.maskImage
+    let maskDataUrl = payload.maskImage
       ? await fileToDataUrl(payload.maskImage.filePath, payload.maskImage.mimeType)
       : null
+    if (maskDataUrl && inputImageDataUrls[0] && payload.provider.referenceImageMode === 'pixel') {
+      const mask = Buffer.from(maskDataUrl.split(',')[1], 'base64')
+      const aligned = await alignReferenceMask(mask, Buffer.from(inputImageDataUrls[0].split(',')[1], 'base64'))
+      if (aligned !== mask) maskDataUrl = `data:image/png;base64,${aligned.toString('base64')}`
+    }
 
     const body = {
       model: payload.provider.model,
