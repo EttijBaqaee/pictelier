@@ -622,6 +622,8 @@ export const englishMessages: Record<string, string> = {
   "auto 从参考图取比例": "Auto aspect ratio from reference",
   "开启后，尺寸选择 auto 且存在参考图时，按第一张参考图比例映射。关闭后，auto 固定使用 1:1。": "With size set to auto and a reference image present, use the first reference's ratio. Otherwise auto uses 1:1.",
   "Grok API 兼容": "Grok API compatibility",
+  "单参考图时附加空白图": "Add a blank image for single-reference edits",
+  "默认关闭。开启后，Grok 编辑请求只有一张参考图时，会自动补一张很小的 64×64 纯白 PNG，以多图格式提交。适用于直接上传和公网参考图，空白图不会加入图库。任务开始后切换开关不影响当前请求；比例是否生效取决于上游。": "Off by default. Grok edits with exactly one reference automatically include a tiny 64×64 white PNG and use the multi-image format. Works with direct uploads and public reference URLs; the blank image is not added to the gallery. Changing the switch does not affect a request already started. Aspect ratio support depends on the upstream provider.",
   "启用后该视频配置会显示 Grok 相关能力设置。": "Show Grok capability settings for this video profile.",
   "启用后按 Grok 风格提交尺寸参数。尺寸会换算成接口支持的比例与分辨率。遮罩编辑不会提交到该接口。": "Use Grok size parameters. Sizes map to supported ratios and resolutions. Mask edits are not sent to this API.",
   "启用后改用 xAI Images 接口的字段。尺寸会换算成 xAI 支持的比例与分辨率。遮罩编辑不会提交到该接口。": "Use xAI Images fields. Sizes map to supported xAI ratios and resolutions. Mask edits are not sent to this API.",

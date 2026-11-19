@@ -157,6 +157,7 @@ if (appConfig.bootstrapProvider && !app.db.getDefaultProviderProfile()) {
     timeoutSeconds: appConfig.bootstrapProvider.timeoutSeconds,
     codexCli: appConfig.bootstrapProvider.codexCli,
     grokApiCompat: false,
+    grokAddBlankReferenceForSingleImage: false,
     xaiImage2kEnabled: false,
     responseFormatB64Json: false,
     isDefault: true,

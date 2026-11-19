@@ -13,6 +13,7 @@ import { serializeTaskRecord, loadSerializedTask, resolveProviderModelLabel, get
 import type { TaskListEventRecord } from '../lib/eventBus.js'
 import { recoverKieNetworkFailedTasks } from '../lib/kieFailedTaskRecover.js'
 import { decryptText } from '../lib/crypto.js'
+import { shouldAddGrokBlankReference } from '../lib/grokBlankReference.js'
 import { searchableFromRow, matchesSearchTags } from '../lib/taskSearchText.js'
 import type { TaskImageRecord, TaskSearchRow, ProviderProfileRecord } from '../lib/db.js'
 
@@ -335,7 +336,7 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
       taskType,
       inputImageCount,
     })
-
+    const addBlankGrokReference = shouldAddGrokBlankReference(providerProfile, taskType, inputImageCount)
     const annotations = pendingFiles.filter(file => file.fieldname === 'mask' || file.fieldname === 'markup')
     if (annotations.length > 1 || (taskType === 'video' && annotations.length)) return reply.code(400).send({ message: '每个图片任务只能使用一个遮罩或标注层' })
     if (taskType === 'image') {
@@ -384,7 +385,11 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
       }
       ;({ event } = app.db.createTaskWithAttachments({
         id: taskId, prompt, taskType,
-        paramsJson: JSON.stringify(taskType === 'video' ? parsedVideoParams : { ...parsedParams, reference_image_mode: normalizeReferenceImageMode(providerProfile.referenceImageMode) }),
+        paramsJson: JSON.stringify(taskType === 'video' ? parsedVideoParams : {
+          ...parsedParams,
+          reference_image_mode: normalizeReferenceImageMode(providerProfile.referenceImageMode),
+          ...(addBlankGrokReference ? { grok_add_blank_reference_for_single_image: true } : {}),
+        }),
         providerProfileId: providerProfile.id, providerProfileModel,
         ownerUsageCodeId: auth.role === 'user' ? selectedUsageCodeId : null,
         ownerKind: auth.role === 'user' ? 'usage_code' : 'admin', reservedImageCredits,

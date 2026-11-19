@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { requireAdmin } from './auth.js'
 import { fetchWithProviderProxy } from './upstreamFetch.js'
 import type { ProviderProfileRecord } from './db.js'
+import { getGrokBlankReferencePng } from './grokBlankReference.js'
 
 type Config = { appSecret: string; referenceBasePath: string }
 type PublicReferenceSettings = {
@@ -73,6 +74,15 @@ function isReferenceFilePath(filePath: string) {
   return !filePath.includes('\\') && !filePath.includes('\0') && !filePath.split('/').some(part => !part || part === '.' || part === '..')
     && /^(uploads|masks)\//.test(filePath)
 }
+
+export function createPublicBlankReferenceUrl(config: Config, provider: ProviderProfileRecord) {
+  if (!provider.publicReferenceEnabled || !isPublicReferenceVerified(config, provider)) throw new Error('公网参考图配置尚未通过检测，请重新检测并保存该节点')
+  const path = `.blank/${crypto.randomUUID()}.png`
+  const origin = normalizePublicReferenceBaseUrl(provider.publicReferenceBaseUrl || '')
+  const expires = Date.now() + Math.max(3600, provider.timeoutSeconds * 2 + 60) * 1000
+  return signedReferenceUrl(config, origin, path, provider.id, expires)
+}
+
 type Variant = { filePath: string; mimeType: string; mode: ReferenceImageMode; seed: string; dimensions?: ReferenceDimensions }
 function variantKey(config: Config) {
   return crypto.createHash('sha256').update('public-reference-variant-v1\0').update(config.appSecret).digest()
@@ -175,6 +185,14 @@ export const publicReferenceRoutes: FastifyPluginAsync = async app => {
   app.get<{ Params: { '*': string } }>(`${app.config.referenceBasePath}/references/*`, async (request, reply) => {
     reply.header('Cache-Control', 'private, no-store')
     const relativePath = request.params['*']
+    if (/^\.blank\/[a-f0-9-]{36}\.png$/.test(relativePath)) {
+      const url = new URL(request.url, 'http://local')
+      const providerId = url.searchParams.get('ref_provider') || ''
+      if (!providerId || !validReferenceSignature(app.config, url, relativePath, providerId)) return reply.code(401).send({ message: '参考图链接无效或已过期' })
+      const provider = app.db.getProviderProfile(providerId)
+      if (!provider?.publicReferenceEnabled || !isPublicReferenceVerified(app.config, provider)) return reply.code(401).send({ message: '参考图链接无效或已过期' })
+      return reply.header('X-Content-Type-Options', 'nosniff').type('image/png').send(await getGrokBlankReferencePng())
+    }
     if (/^\.variants\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.[a-z]+$/.test(relativePath)) {
       const url = new URL(request.url, 'http://local')
       const providerId = url.searchParams.get('ref_provider') || ''

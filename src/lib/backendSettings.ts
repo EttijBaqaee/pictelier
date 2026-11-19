@@ -19,6 +19,7 @@ export interface BackendRuntimeSettings {
   referenceImageMode?: ReferenceImageMode
   imageExtensions?: ImageExtensionsConfig
   grokApiCompat: boolean
+  grokAddBlankReferenceForSingleImage: boolean
   xaiImage2kEnabled: boolean
   responseFormatB64Json: boolean
   publicReferenceEnabled?: boolean
@@ -82,6 +83,7 @@ export interface BackendProviderProfile {
   referenceImageMode?: ReferenceImageMode
   imageExtensions?: ImageExtensionsConfig
   grokApiCompat: boolean
+  grokAddBlankReferenceForSingleImage: boolean
   xaiImage2kEnabled: boolean
   responseFormatB64Json: boolean
   publicReferenceEnabled?: boolean
@@ -123,6 +125,7 @@ export interface BackendProviderOption {
   referenceImageMode?: ReferenceImageMode
   imageExtensions?: ImageExtensionsConfig
   grokApiCompat: boolean
+  grokAddBlankReferenceForSingleImage: boolean
   xaiImage2kEnabled: boolean
   responseFormatB64Json: boolean
   publicReferenceEnabled?: boolean
@@ -391,6 +394,7 @@ export async function saveBackendRuntimeSettings(settings: {
   referenceImageMode?: ReferenceImageMode
   imageExtensions?: ImageExtensionsConfig
   grokApiCompat: boolean
+  grokAddBlankReferenceForSingleImage: boolean
   xaiImage2kEnabled: boolean
   responseFormatB64Json: boolean
   publicReferenceEnabled?: boolean

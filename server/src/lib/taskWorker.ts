@@ -4,7 +4,8 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import { decryptText } from './crypto.js'
-import { preparePublicReferenceImageUrl } from './publicReferenceImages.js'
+import { createPublicBlankReferenceUrl, preparePublicReferenceImageUrl } from './publicReferenceImages.js'
+import { applyGrokBlankReferenceTaskSnapshot } from './grokBlankReference.js'
 import type { AppDatabase, TaskRecord } from './db.js'
 import { executeImageTask, writeOutputImage, writeOutputImageThumbnail, type GeneratedImageResult } from './imageApi.js'
 import { recoverKieTaskOutputs } from './kieApi.js'
@@ -204,7 +205,9 @@ export class TaskWorker {
     let outputDir = path.join(this.config.outputsDir, taskId)
 
     try {
-      const params = JSON.parse(task.paramsJson) as ImageRequestParams
+      const params = JSON.parse(task.paramsJson) as ImageRequestParams & {
+        grok_add_blank_reference_for_single_image?: boolean
+      }
       const storedImages = this.db.listTaskImages(taskId)
       const storedOutputs = storedImages.filter((image) => image.kind === 'output')
       // A crash can occur after output commit but before thumbnail/completion.
@@ -294,8 +297,12 @@ export class TaskWorker {
         ? { ...provider, model: task.providerProfileModel.trim() }
         : provider
 
-      // Freeze the reference mode recorded at creation, including queued tasks from older versions.
-      runtimeProvider = { ...runtimeProvider, referenceImageMode: normalizeReferenceImageMode(params.reference_image_mode) }
+      // Use the reference options captured when the task was created.
+      runtimeProvider = {
+        ...runtimeProvider,
+        referenceImageMode: normalizeReferenceImageMode(params.reference_image_mode),
+      }
+      runtimeProvider = applyGrokBlankReferenceTaskSnapshot(runtimeProvider, params)
       const images = await executeImageTask(
         this.db,
         {
@@ -315,6 +322,9 @@ export class TaskWorker {
         },
         apiKey,
         {
+          publicBlankReferenceUrl: () => createPublicBlankReferenceUrl(
+            { appSecret: this.config.appSecret, referenceBasePath: this.config.referenceBasePath ?? '' }, runtimeProvider,
+          ),
           publicReferenceImageUrl: (image, matchReferenceUrl) => preparePublicReferenceImageUrl(
             { appSecret: this.config.appSecret, referenceBasePath: this.config.referenceBasePath ?? '', mediaDir: this.config.mediaDir }, runtimeProvider,
             path.relative(this.config.mediaDir, image.filePath).split(path.sep).join('/'),

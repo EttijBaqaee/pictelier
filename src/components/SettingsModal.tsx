@@ -209,6 +209,7 @@ function createEmptyProfile(): BackendProviderProfile {
     timeoutSeconds: DEFAULT_SETTINGS.timeout,
     codexCli: false,
     grokApiCompat: false,
+    grokAddBlankReferenceForSingleImage: false,
     xaiImage2kEnabled: false,
     responseFormatB64Json: false,
     referenceImageMode: 'original',
@@ -1527,6 +1528,7 @@ const hasUnreadEndedReminders = useMemo(
           referenceImageMode: runtimeSettings.referenceImageMode,
           imageExtensions: runtimeSettings.imageExtensions,
           grokApiCompat: runtimeSettings.grokApiCompat,
+          grokAddBlankReferenceForSingleImage: runtimeSettings.grokAddBlankReferenceForSingleImage ?? false,
           xaiImage2kEnabled: runtimeSettings.xaiImage2kEnabled,
           responseFormatB64Json: runtimeSettings.responseFormatB64Json,
           videoMaxResolution: runtimeSettings.videoMaxResolution ?? '480p',
@@ -1906,6 +1908,9 @@ const hasUnreadEndedReminders = useMemo(
       referenceImageMode: profileDraft.referenceImageMode ?? 'original',
       imageExtensions: profileDraft.imageExtensions,
       grokApiCompat: (profileDraft.apiMode === 'wavespeed' || profileDraft.apiMode === 'kie') ? false : profileDraft.grokApiCompat,
+      grokAddBlankReferenceForSingleImage: profileDraft.apiMode === 'images' && !profileDraft.codexCli && profileDraft.grokApiCompat
+        ? profileDraft.grokAddBlankReferenceForSingleImage
+        : false,
       xaiImage2kEnabled: (
         profileDraft.apiMode === 'wavespeed'
         || profileDraft.apiMode === 'kie'
@@ -3457,6 +3462,14 @@ const hasUnreadEndedReminders = useMemo(
                       : t("开启后，xAI 图片接口会按请求尺寸尽量使用 2K。关闭时，xAI 图片仍固定使用 1K。")}
                     checked={profileDraft.xaiImage2kEnabled}
                     onChange={(checked) => updateProfileDraft({ xaiImage2kEnabled: checked })}
+                  />
+                )}
+                {profileDraft.apiMode === 'images' && profileDraft.grokApiCompat && !profileDraft.codexCli && (
+                  <PreferenceRow
+                    title={t("单参考图时附加空白图")}
+                    description={t("默认关闭。开启后，Grok 编辑请求只有一张参考图时，会自动补一张很小的 64×64 纯白 PNG，以多图格式提交。适用于直接上传和公网参考图，空白图不会加入图库。任务开始后切换开关不影响当前请求；比例是否生效取决于上游。")}
+                    checked={profileDraft.grokAddBlankReferenceForSingleImage === true}
+                    onChange={(checked) => updateProfileDraft({ grokAddBlankReferenceForSingleImage: checked })}
                   />
                 )}
                 {(profileDraft.apiMode === 'images' || profileDraft.apiMode === 'venice_images' || profileDraft.apiMode === 'responses') && (

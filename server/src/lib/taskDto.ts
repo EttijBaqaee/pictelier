@@ -286,12 +286,14 @@ export function serializeTaskRecord(
   const currentProviderUsedVideoCredits = task.providerProfileId
     ? (ownerUsageCodeProviderUsedVideoCredits?.[task.providerProfileId] ?? 0)
     : null
+  const params = JSON.parse(task.paramsJson) as Record<string, unknown>
+  delete params.grok_add_blank_reference_for_single_image
 
   return {
     id: task.id,
     prompt: task.prompt,
     taskType: task.taskType ?? 'image',
-    params: JSON.parse(task.paramsJson),
+    params,
     providerProfileId: task.providerProfileId,
     providerProfileName: options.preferProviderRemark
       ? (options.providerProfile?.remarkName ?? options.providerProfile?.name ?? null)

@@ -12,6 +12,7 @@ import { fetchWithProviderProxy } from './upstreamFetch.js'
 import { resolveAdminGatedResolution } from './specialProviderQuality.js'
 import { isImagesOnlyModel, parseProviderImageJsonResponse } from './providerImageExtract.js'
 import { resolveEffectiveMaxReferenceImages } from './maxReferenceImages.js'
+import { getGrokBlankReferencePng } from './grokBlankReference.js'
 
 const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -44,6 +45,7 @@ export interface GeneratedImageResult {
 
 export interface ExecuteImageTaskOptions {
   publicReferenceImageUrl?: (image: TaskImageInput, matchReferenceUrl?: string) => string | Promise<string>
+  publicBlankReferenceUrl?: () => string
 
   onImageComplete?: (completed: number, total: number) => void
   onImagesReady?: (
@@ -592,6 +594,20 @@ async function callImagesApi(
       const inputImageUrls = payload.provider.publicReferenceEnabled
         ? await Promise.all(payload.inputImages.map((image) => options.publicReferenceImageUrl!(image)))
         : await Promise.all(payload.inputImages.map((image) => fileToDataUrl(image.filePath, image.mimeType, payload.provider.referenceImageMode)))
+      if (
+        payload.provider.apiMode === 'images'
+        && !payload.provider.codexCli
+        && payload.provider.grokAddBlankReferenceForSingleImage === 1
+        && inputImageUrls.length === 1
+      ) {
+        if (payload.provider.publicReferenceEnabled) {
+          if (!options.publicBlankReferenceUrl) throw new Error('公网空白参考图链接生成器不可用')
+          inputImageUrls.push(options.publicBlankReferenceUrl())
+        } else {
+          const png = await getGrokBlankReferencePng()
+          inputImageUrls.push(`data:image/png;base64,${png.toString('base64')}`)
+        }
+      }
 
       const response = await fetchWithTimeout(
         buildApiUrl(payload.provider.baseUrl, 'images/edits'),

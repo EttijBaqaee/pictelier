@@ -7,6 +7,8 @@ import Database from 'better-sqlite3'
 import type { TaskEventRecord } from './eventBus.js'
 import { normalizeMaxReferenceImages } from './maxReferenceImages.js'
 
+const GROK_BLANK_REFERENCE_SETTINGS_KEY = 'grok_blank_reference_by_provider'
+
 export interface ProviderProfileRecord {
   id: string
   name: string
@@ -22,6 +24,7 @@ export interface ProviderProfileRecord {
   referenceImageMode?: ReferenceImageMode
   imageExtensions?: ImageExtensionsConfig
   grokApiCompat: number
+  grokAddBlankReferenceForSingleImage: number
   xaiImage2kEnabled: number
   responseFormatB64Json: number
   publicReferenceEnabled?: number
@@ -1059,7 +1062,19 @@ export class AppDatabase {
     return candidates[crypto.randomInt(candidates.length)] ?? PROVIDER_TAG_COLORS[0]
   }
 
+  private getGrokBlankReferenceSettings() {
+    const stored = this.getAppSetting<Record<string, unknown>>(GROK_BLANK_REFERENCE_SETTINGS_KEY)
+    const settings: Record<string, boolean> = Object.create(null)
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+      for (const [id, enabled] of Object.entries(stored)) {
+        if (enabled === true) settings[id] = true
+      }
+    }
+    return settings
+  }
+
   listProviderProfiles() {
+    const blankReferenceSettings = this.getGrokBlankReferenceSettings()
     const rows = this.sqlite
       .prepare(`
         SELECT
@@ -1108,6 +1123,7 @@ export class AppDatabase {
       const { modelOptionsJson, imageExtensionsJson, videoResolutionOptionsJson, videoDurationOptionsJson, ...rest } = row
       return {
         ...rest,
+        grokAddBlankReferenceForSingleImage: blankReferenceSettings[rest.id] ? 1 : 0,
         modelOptions: parseProviderModelOptions(modelOptionsJson, rest.apiMode),
         imageExtensions: normalizeImageExtensions(imageExtensionsJson ? JSON.parse(imageExtensionsJson) : null),
         videoResolutionOptions: parseVideoResolutionOptions(videoResolutionOptionsJson, rest.videoMaxResolution),
@@ -1164,6 +1180,7 @@ export class AppDatabase {
     if (!row) return undefined
     return {
       ...row,
+      grokAddBlankReferenceForSingleImage: this.getGrokBlankReferenceSettings()[row.id] ? 1 : 0,
       modelOptions: parseProviderModelOptions(row.modelOptionsJson, row.apiMode),
       imageExtensions: normalizeImageExtensions(row.imageExtensionsJson ? JSON.parse(row.imageExtensionsJson) : null),
       videoResolutionOptions: parseVideoResolutionOptions(row.videoResolutionOptionsJson, row.videoMaxResolution),
@@ -1220,6 +1237,7 @@ export class AppDatabase {
     if (!row) return undefined
     return {
       ...row,
+      grokAddBlankReferenceForSingleImage: this.getGrokBlankReferenceSettings()[row.id] ? 1 : 0,
       modelOptions: parseProviderModelOptions(row.modelOptionsJson, row.apiMode),
       imageExtensions: normalizeImageExtensions(row.imageExtensionsJson ? JSON.parse(row.imageExtensionsJson) : null),
       videoResolutionOptions: parseVideoResolutionOptions(row.videoResolutionOptionsJson, row.videoMaxResolution),
@@ -1242,6 +1260,7 @@ export class AppDatabase {
     referenceImageMode?: ReferenceImageMode
     imageExtensions?: ImageExtensionsConfig
     grokApiCompat?: boolean
+    grokAddBlankReferenceForSingleImage?: boolean
     xaiImage2kEnabled?: boolean
     responseFormatB64Json?: boolean
     publicReferenceEnabled?: boolean
@@ -1425,6 +1444,13 @@ export class AppDatabase {
         createdAt: now,
         updatedAt: now,
       })
+      const blankReferenceSettings = this.getGrokBlankReferenceSettings()
+      if (input.grokAddBlankReferenceForSingleImage ?? Boolean(current?.grokAddBlankReferenceForSingleImage)) {
+        blankReferenceSettings[input.id] = true
+      } else {
+        delete blankReferenceSettings[input.id]
+      }
+      this.setAppSetting(GROK_BLANK_REFERENCE_SETTINGS_KEY, blankReferenceSettings)
     })
 
     tx()
@@ -1439,6 +1465,11 @@ export class AppDatabase {
       throw new Error('至少需要保留一个 API 配置')
     }
     this.sqlite.prepare('DELETE FROM provider_profiles WHERE id = ?').run(id)
+    const blankReferenceSettings = this.getGrokBlankReferenceSettings()
+    if (blankReferenceSettings[id]) {
+      delete blankReferenceSettings[id]
+      this.setAppSetting(GROK_BLANK_REFERENCE_SETTINGS_KEY, blankReferenceSettings)
+    }
     if (profile.isDefault) {
       this.sqlite.prepare(`
         UPDATE provider_profiles
@@ -3426,6 +3457,12 @@ ${selectUsageCodeFields()}
         error_message = @errorMessage,
         upstream_request_id = COALESCE(@upstreamRequestId, upstream_request_id),
         upstream_usage_json = COALESCE(@upstreamUsageJson, upstream_usage_json),
+        params_json = CASE
+          WHEN @status IN ('succeeded', 'failed') AND json_valid(params_json)
+            AND json_type(params_json, '$.grok_add_blank_reference_for_single_image') IS NOT NULL
+          THEN json_remove(params_json, '$.grok_add_blank_reference_for_single_image')
+          ELSE params_json
+        END,
         updated_at = @updatedAt,
         finished_at = @finishedAt
       WHERE id = @id
@@ -4107,6 +4144,12 @@ ${selectUsageCodeFields()}
       for (const setting of input.appSettings) {
         insertAppSetting.run(setting)
       }
+      const blankReferenceSettings = this.getGrokBlankReferenceSettings()
+      for (const profile of input.providerProfiles) {
+        if (profile.grokAddBlankReferenceForSingleImage) blankReferenceSettings[profile.id] = true
+        else delete blankReferenceSettings[profile.id]
+      }
+      this.setAppSetting(GROK_BLANK_REFERENCE_SETTINGS_KEY, blankReferenceSettings)
       for (const usageCode of input.usageCodes) {
         insertUsageCode.run({
           ...usageCode,
