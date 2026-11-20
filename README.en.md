@@ -2,7 +2,7 @@
 
 [![简体中文](https://img.shields.io/badge/简体中文-Readme-lightgrey)](README.md) [![English](https://img.shields.io/badge/English-Current-blue)](README.en.md)
 
-Pictelier (绘坊) is an AI creative workspace that stores generated images on your own server, built on [GPT Image Playground](https://github.com/CookSleep/gpt_image_playground). Sign in to the same instance from your phone, computer, or another device to browse, download, and manage previous creations without relying on one browser’s history.
+Pictelier (绘坊) is an AI creative workspace that stores generated images on your own server, built on [GPT Image Playground](https://github.com/XianYuDaXian/gpt_image_playground). Sign in to the same instance from your phone, computer, or another device to browse, download, and manage previous creations without relying on one browser’s history.
 
 - **Server-hosted gallery and access across devices:** generated images and task records stay on your server and are available when you sign in to the same instance from another device.
 - **Multiple providers:** connect Images, Responses, Videos, Venice, WaveSpeed, and Kie endpoints. Configure models and optional capabilities according to each provider's documentation.
