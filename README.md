@@ -2,7 +2,7 @@
 
 [![简体中文](https://img.shields.io/badge/简体中文-当前页面-blue)](README.md) [![English](https://img.shields.io/badge/English-Readme-lightgrey)](README.en.md)
 
-绘坊（Pictelier）是一款将生成图片保存在自己服务器上的 AI 创作工作台，基于 [GPT Image Playground](https://github.com/CookSleep/gpt_image_playground) 开发。登录同一实例，即可在手机、电脑等设备上随时查看、下载和管理已生成的图片，不必依赖单台设备的浏览器记录。
+绘坊（Pictelier）是一款将生成图片保存在自己服务器上的 AI 创作工作台，基于 [GPT Image Playground](https://github.com/XianYuDaXian/gpt_image_playground) 开发。登录同一实例，即可在手机、电脑等设备上随时查看、下载和管理已生成的图片，不必依赖单台设备的浏览器记录。
 
 - **服务器图库与跨设备访问**：生成图片和任务记录集中保存在服务器；在不同设备上登录同一实例，即可访问已有作品。
 - **多供应商接入**：支持 Images、Responses、Videos、Venice、WaveSpeed 和 Kie 等接口模式；按供应商文档配置模型与扩展能力。
