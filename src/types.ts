@@ -179,6 +179,8 @@ export interface TaskRecord {
   maskImageId?: string | null
   /** 输出图片的 image store id 列表 */
   outputImages: string[]
+  outputImageReturnedAtById?: Record<string, number>
+  outputImageUpstreamCompletedAtById?: Record<string, number>
   /** 输出视频的 media store id 列表 */
   outputVideos?: string[]
   imageUrlsById?: Record<string, string>

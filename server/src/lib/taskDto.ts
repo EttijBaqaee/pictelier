@@ -3,6 +3,7 @@ import { appConfig } from '../config.js'
 import type { AppDatabase, ProviderProfileRecord, TaskImageRecord, TaskRecord } from './db.js'
 import { decryptText } from './crypto.js'
 import { resolveEffectiveMaxReferenceImages } from './maxReferenceImages.js'
+import { readImageCompletionMetadata } from './upstreamImageTime.js'
 
 function toUiStatus(status: string) {
   if (status === 'failed' || status === 'canceled') return 'error'
@@ -254,6 +255,18 @@ export function serializeTaskRecord(
 ) {
   const inputImages = images.filter((image) => image.kind === 'input' || image.kind === 'video_input')
   const outputImages = images.filter((image) => image.kind === 'output')
+  const outputImageReturnedAtById: Record<string, number> = {}
+  const outputImageUpstreamCompletedAtById: Record<string, number> = {}
+  for (const image of outputImages) {
+    const savedAt = toMs(image.createdAt)
+    if (savedAt !== null && Number.isFinite(savedAt)) {
+      outputImageReturnedAtById[image.id] = savedAt
+    }
+    const upstreamCompletedAt = readImageCompletionMetadata(image.metadataJson)
+    if (upstreamCompletedAt !== undefined) {
+      outputImageUpstreamCompletedAtById[image.id] = upstreamCompletedAt
+    }
+  }
   const outputVideos = images.filter((image) => image.kind === 'video_output')
   const maskImage = images.find((image) => image.kind === 'mask') ?? null
   const createdAt = toMs(task.createdAt) ?? Date.now()
@@ -305,6 +318,8 @@ export function serializeTaskRecord(
     providerProfileBaseUrl: options.providerProfile?.baseUrl ?? null,
     inputImageIds: inputImages.map((image) => image.id),
     outputImages: outputImages.map((image) => image.id),
+    outputImageReturnedAtById,
+    outputImageUpstreamCompletedAtById,
     outputVideos: outputVideos.map((video) => video.id),
     maskImageId: maskImage?.id ?? null,
     maskTargetImageId: maskImage ? inputImages[0]?.id ?? null : null,

@@ -9,7 +9,8 @@ import { applyGrokBlankReferenceTaskSnapshot } from './grokBlankReference.js'
 import type { AppDatabase, TaskRecord } from './db.js'
 import { executeImageTask, writeOutputImage, writeOutputImageThumbnail, type GeneratedImageResult } from './imageApi.js'
 import { recoverKieTaskOutputs } from './kieApi.js'
-import { buildKieUpstreamUsageJson } from './kieFailedTaskRecover.js'
+import { buildKieUpstreamUsageJson, parseUpstreamUsageJson } from './kieFailedTaskRecover.js'
+import { imageCompletionMetadata } from './upstreamImageTime.js'
 import { assertAllOutputImagesPersisted, createOutputImagePersistQueue } from './outputImagePersist.js'
 import { downloadVideoOutput, generateVideoPoster, pollVideoGeneration, submitVideoGeneration } from './videoApi.js'
 import type { TaskEventBus } from './eventBus.js'
@@ -267,6 +268,7 @@ export class TaskWorker {
             sha256: written.sha256,
             width: written.width,
             height: written.height,
+            metadataJson: imageCompletionMetadata(image.upstreamCompletedAt),
           })
           if (!saved) return false
 
@@ -354,6 +356,7 @@ export class TaskWorker {
               upstreamUsageJson: buildKieUpstreamUsageJson({
                 kieTaskId: meta.requestId || latest?.upstreamRequestId || null,
                 kieResultUrls: meta.resultUrls || null,
+                upstreamCompletedAt: meta.upstreamCompletedAt,
                 previousJson: latest?.upstreamUsageJson,
               }),
             })
@@ -430,7 +433,11 @@ export class TaskWorker {
             message: '上游可能已出图，正在按任务 ID 重新拉取',
           })) return
 
-          const recoveredImages = await recoverKieTaskOutputs(runtimeProvider, apiKey, upstreamTaskId)
+          const usage = parseUpstreamUsageJson(latestTask?.upstreamUsageJson)
+          const recoveredImages = await recoverKieTaskOutputs(
+            runtimeProvider, apiKey, upstreamTaskId,
+            upstreamTaskId === usage.kieTaskId ? usage.upstreamCompletedAt : undefined,
+          )
           if (this.isTaskInactive(taskId)) return
 
           if (!this.emit(taskId, {
@@ -458,6 +465,7 @@ export class TaskWorker {
                 sha256: written.sha256,
                 width: written.width,
                 height: written.height,
+                metadataJson: imageCompletionMetadata(image.upstreamCompletedAt),
               })
               if (!saved) return false
 

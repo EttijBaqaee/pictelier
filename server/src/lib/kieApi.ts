@@ -7,6 +7,7 @@ import type { GeneratedImageResult, TaskExecutionPayload, ExecuteImageTaskOption
 import { fetchWithProviderProxy } from './upstreamFetch.js'
 import { resolveAdminGatedKieQuality } from './specialProviderQuality.js'
 import { resolveEffectiveMaxReferenceImages } from './maxReferenceImages.js'
+import { readUpstreamCompletedAt } from './upstreamImageTime.js'
 
 type AspectRatio = '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '2:3' | '3:2'
 type KieTaskKind = 'generate' | 'edit' | 'multi-edit'
@@ -28,6 +29,7 @@ interface KieRecordData {
   failCode?: string | null
   failMsg?: string | null
   costTime?: number | null
+  completeTime?: number | null
 }
 
 interface KieRecordResponse {
@@ -337,7 +339,7 @@ async function waitForTask(provider: ProviderProfileRecord, apiKey: string, task
       if (state === 'success') {
         const urls = parseKieResultUrls(data.resultJson)
         if (!urls.length) throw new Error('Kie 任务成功但未返回 resultUrls')
-        return urls
+        return { urls, upstreamCompletedAt: readUpstreamCompletedAt(data.completeTime, 'milliseconds') }
       }
       if (state === 'fail' || state === 'failed' || state === 'error') {
         throw new Error(data.failMsg || data.failCode || 'Kie 任务失败')
@@ -379,11 +381,12 @@ async function downloadRemoteImage(url: string): Promise<GeneratedImageResult> {
   return { buffer, mimeType }
 }
 
-export async function downloadKieResultUrls(urls: string[]) {
+export async function downloadKieResultUrls(urls: string[], upstreamCompletedAt?: number) {
   const images: GeneratedImageResult[] = []
   // 串行下载，避免并发把弱网打满后全部失败
   for (const url of urls) {
-    images.push(await downloadRemoteImage(url))
+    const image = await downloadRemoteImage(url)
+    images.push({ ...image, upstreamCompletedAt })
   }
   return images
 }
@@ -392,18 +395,23 @@ async function materializeKieOutputs(
   provider: ProviderProfileRecord,
   apiKey: string,
   taskId: string,
-  urls: string[],
+  result: { urls: string[]; upstreamCompletedAt?: number },
 ) {
   try {
-    return await downloadKieResultUrls(urls)
+    return await downloadKieResultUrls(result.urls, result.upstreamCompletedAt)
   } catch (firstError) {
     // 上游已成功时，再查一次结果 URL 后重下，降低 CDN 短时失效概率
-    let freshUrls = urls
+    let freshResult = result
     try {
       const data = await queryTask(provider, apiKey, taskId)
       if (String(data.state || '').toLowerCase() === 'success') {
         const nextUrls = parseKieResultUrls(data.resultJson)
-        if (nextUrls.length > 0) freshUrls = nextUrls
+        if (nextUrls.length > 0) {
+          freshResult = {
+            urls: nextUrls,
+            upstreamCompletedAt: readUpstreamCompletedAt(data.completeTime, 'milliseconds') ?? result.upstreamCompletedAt,
+          }
+        }
       }
     } catch {
       /* 使用首轮 URL */
@@ -411,7 +419,7 @@ async function materializeKieOutputs(
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 1500))
-      return await downloadKieResultUrls(freshUrls)
+      return await downloadKieResultUrls(freshResult.urls, freshResult.upstreamCompletedAt)
     } catch (secondError) {
       throw new Error(
         `远端已出图但本地下载失败：${formatNetworkError(secondError, formatNetworkError(firstError))}`,
@@ -516,9 +524,9 @@ async function runSingleKie(
   options.onUpstreamRequestId?.(taskId)
   options.onUpstreamMeta?.({ requestId: taskId })
 
-  const urls = await waitForTask(payload.provider, apiKey, taskId)
-  options.onUpstreamMeta?.({ requestId: taskId, resultUrls: urls })
-  return materializeKieOutputs(payload.provider, apiKey, taskId, urls)
+  const result = await waitForTask(payload.provider, apiKey, taskId)
+  options.onUpstreamMeta?.({ requestId: taskId, resultUrls: result.urls, upstreamCompletedAt: result.upstreamCompletedAt })
+  return materializeKieOutputs(payload.provider, apiKey, taskId, result)
 }
 
 async function runSerialSingles(
@@ -543,6 +551,7 @@ export async function recoverKieTaskOutputs(
   provider: ProviderProfileRecord,
   apiKey: string,
   upstreamTaskId: string,
+  knownCompletedAt?: number,
 ): Promise<GeneratedImageResult[]> {
   const taskId = String(upstreamTaskId || "").trim();
   if (!taskId) throw new Error("缺少上游 taskId，无法恢复结果");
@@ -554,13 +563,19 @@ export async function recoverKieTaskOutputs(
   }
   if (state !== "success") {
     // 仍在生成中时继续等到完成或超时
-    const urls = await waitForTask(provider, apiKey, taskId);
-    return materializeKieOutputs(provider, apiKey, taskId, urls);
+    const result = await waitForTask(provider, apiKey, taskId);
+    return materializeKieOutputs(provider, apiKey, taskId, {
+      ...result,
+      upstreamCompletedAt: result.upstreamCompletedAt ?? knownCompletedAt,
+    });
   }
 
   const urls = parseKieResultUrls(data.resultJson);
   if (!urls.length) throw new Error("Kie 任务成功但未返回 resultUrls");
-  return materializeKieOutputs(provider, apiKey, taskId, urls);
+  return materializeKieOutputs(provider, apiKey, taskId, {
+    urls,
+    upstreamCompletedAt: readUpstreamCompletedAt(data.completeTime, 'milliseconds') ?? knownCompletedAt,
+  });
 }
 
 export async function executeKieImageTask(

@@ -149,6 +149,8 @@ export const englishMessages: Record<string, string> = {
   "模型": "Model",
   "压缩率": "Compression",
   "创建于": "Created",
+  "图片返回时间": "Image received",
+  "上游完成时间": "Upstream completion time",
   "任务号": "Task ID",
   "复制任务号": "Copy task ID",
   "· 耗时": "· Duration",

@@ -251,6 +251,8 @@ export default function DetailModal() {
 
   const outputLen = outputImageCount
   const isVideoTask = task.taskType === 'video'
+  const currentImageReturnedAt = isVideoTask ? null : task.outputImageReturnedAtById?.[currentOutputImageId] ?? null
+  const currentImageUpstreamCompletedAt = task.outputImageUpstreamCompletedAtById?.[currentOutputImageId] ?? null
   const videoParams = isVideoTask ? task.params as VideoTaskParams : null
   const currentImageRatio = currentOutputImageId ? imageRatios[currentOutputImageId] : ''
   const currentImageSize = currentOutputImageId ? imageSizes[currentOutputImageId] : ''
@@ -858,6 +860,20 @@ export default function DetailModal() {
               {formatDuration() && <span> {t(" · 耗时 ")}{formatDuration()}</span>}
               {task.ownerLabel && <span> {t(" · 来源 ")}</span>}
               {task.ownerLabel && <UsageCodeBadge task={task} />}
+              {currentImageReturnedAt !== null && (
+                <div className="mt-1.5">
+                  {t("图片返回时间 ")}
+                  <time dateTime={new Date(currentImageReturnedAt).toISOString()}>{formatTime(currentImageReturnedAt)}</time>
+                </div>
+              )}
+              {!isVideoTask && currentOutputImageId && (
+                <div className="mt-1.5">
+                  {t("上游完成时间 ")}
+                  {currentImageUpstreamCompletedAt === null
+                    ? t("无")
+                    : <time dateTime={new Date(currentImageUpstreamCompletedAt).toISOString()}>{formatTime(currentImageUpstreamCompletedAt)}</time>}
+                </div>
+              )}
             </div>
           </div>
 

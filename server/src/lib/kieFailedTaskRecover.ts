@@ -11,6 +11,7 @@ import {
 } from './kieApi.js'
 import { assertAllOutputImagesPersisted, createOutputImagePersistQueue } from './outputImagePersist.js'
 import type { TaskEventBus } from './eventBus.js'
+import { imageCompletionMetadata, readUpstreamCompletedAt } from './upstreamImageTime.js'
 
 export type KieRecoverCandidate = {
   task: TaskRecord
@@ -36,6 +37,7 @@ export function isKieNetworkFailureMessage(message: string | null | undefined) {
 export function parseUpstreamUsageJson(raw: string | null | undefined): {
   kieTaskId?: string
   kieResultUrls?: string[]
+  upstreamCompletedAt?: number
 } {
   if (!raw?.trim()) return {}
   try {
@@ -47,6 +49,7 @@ export function parseUpstreamUsageJson(raw: string | null | undefined): {
     return {
       kieTaskId: kieTaskId || undefined,
       kieResultUrls: urls,
+      upstreamCompletedAt: readUpstreamCompletedAt(parsed.upstreamCompletedAt, 'milliseconds'),
     }
   } catch {
     return {}
@@ -56,12 +59,14 @@ export function parseUpstreamUsageJson(raw: string | null | undefined): {
 export function buildKieUpstreamUsageJson(input: {
   kieTaskId?: string | null
   kieResultUrls?: string[] | null
+  upstreamCompletedAt?: number
   previousJson?: string | null
 }) {
   const prev = parseUpstreamUsageJson(input.previousJson)
-  const next: Record<string, unknown> = { ...prev }
-  if (input.kieTaskId?.trim()) next.kieTaskId = input.kieTaskId.trim()
+  const kieTaskId = input.kieTaskId?.trim() || prev.kieTaskId
+  const next = kieTaskId === prev.kieTaskId ? { ...prev } : { kieTaskId }
   if (input.kieResultUrls && input.kieResultUrls.length > 0) next.kieResultUrls = input.kieResultUrls
+  if (input.upstreamCompletedAt !== undefined) next.upstreamCompletedAt = input.upstreamCompletedAt
   return JSON.stringify(next)
 }
 
@@ -141,6 +146,7 @@ async function persistRecoveredImages(input: {
         sha256: written.sha256,
         width: written.width,
         height: written.height,
+        metadataJson: imageCompletionMetadata(image.upstreamCompletedAt),
       })
       if (!saved) return false
 
@@ -251,9 +257,9 @@ export async function recoverOneKieFailedTask(input: {
 
     let images: GeneratedImageResult[]
     if (upstreamTaskId) {
-      images = await recoverKieTaskOutputs(runtimeProvider, apiKey, upstreamTaskId)
+      images = await recoverKieTaskOutputs(runtimeProvider, apiKey, upstreamTaskId, upstreamTaskId === usage.kieTaskId ? usage.upstreamCompletedAt : undefined)
     } else {
-      images = await downloadKieResultUrls(resultUrls)
+      images = await downloadKieResultUrls(resultUrls, input.resultUrls?.length ? undefined : usage.upstreamCompletedAt)
     }
 
     input.db.updateTaskProgress({

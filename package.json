@@ -2,7 +2,7 @@
   "name": "pictelier",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.3.66.13",
+  "version": "0.3.66.14",
   "type": "module",
   "scripts": {
     "sync-version": "node scripts/sync-version.mjs",

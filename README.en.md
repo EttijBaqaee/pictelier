@@ -1,4 +1,4 @@
-# Pictelier · 0.3.66.13
+# Pictelier · 0.3.66.14
 
 [![简体中文](https://img.shields.io/badge/简体中文-Readme-lightgrey)](README.md) [![English](https://img.shields.io/badge/English-Current-blue)](README.en.md)
 
@@ -13,21 +13,28 @@ Pictelier (绘坊) is an AI creative workspace that stores generated images on y
 
 **Quick navigation**
 
-- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-13) · [AI scripting guide (Chinese)](agent.md)
+- **Overview:** [Interface preview](#section-1) · [Release notes](#release-0-3-66-14) · [AI scripting guide (Chinese)](agent.md)
 - **Deploy:** [Docker](#section-2) · [1Panel](#section-3)
 - **Configure:** [Paths and proxies](#section-4) · [Providers](#section-5) · [Environment variables](#section-8)
 - **Use and maintain:** [Appearance](#section-6) · [Tasks and data](#section-7) · [Backups](#section-9) · [Troubleshooting](#section-10)
 - **Legal:** [License](#section-11) · [Privacy](#section-12) · [Disclaimer](#section-13)
 
+<a id="release-0-3-66-14"></a>
+
+## What changes in 0.3.66.14
+
+- **Image return time:** task details show when the current output image was saved to the server, below the creation time and duration. Switching between outputs shows the time for the selected image.
+- **Upstream completion time:** task details show the completion time reported by the provider. The field shows “None” when no completion time was recorded.
+
+<details>
+<summary>Previous release notes (0.3.66.13 and earlier)</summary>
+
 <a id="release-0-3-66-13"></a>
 
 ## What changes in 0.3.66.13
 
-- **Optional Grok single-reference padding:** Grok-compatible Images profiles can append a temporary 64×64 white PNG when an image task has exactly one reference. The switch is off by default; text-to-image, multiple references, and other protocols are unchanged.
+- **Grok single-reference editing:** Grok may use the reference image's aspect ratio and dimensions in single-image edits, so manual size settings may have no effect. To work around this, enable **Add a blank image for single-reference edits** in a Grok-compatible Images profile. When there is exactly one reference, Pictelier appends a temporary 64×64 white PNG and uses the multi-image edit format to send the aspect ratio and the 1K or 2K resolution tier mapped from the chosen size. The switch is off by default. Actual output depends on what the upstream API supports.
 - **Task behavior is captured at creation:** changing the profile later affects new tasks only. The added image is sent upstream only; it is not stored in the task's image list or gallery, and existing references remain unchanged.
-
-<details>
-<summary>Previous release notes (0.3.66.12 and earlier)</summary>
 
 <a id="release-0-3-66-12"></a>
 
@@ -128,7 +135,7 @@ docker compose pull app
 docker compose up -d
 ```
 
-Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.13` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
+Pin the image to `ghcr.io/ettijbaqaee/pictelier:0.3.66.14` for a fixed version. `latest` follows the most recently published version. Release images target Linux amd64. The GHCR image and offline release archive contain the same application.
 
 For offline installation, load the release archive with `docker load -i <archive.tar.gz>`, then use its image tag in Compose. Release downloads are available on the [releases page](https://github.com/EttijBaqaee/pictelier/releases).
 
@@ -137,7 +144,7 @@ For offline installation, load the release archive with `docker load -i <archive
 Clone or download the desired version, then configure the build template:
 
 ```bash
-git clone --branch v0.3.66.13 https://github.com/EttijBaqaee/pictelier.git
+git clone --branch v0.3.66.14 https://github.com/EttijBaqaee/pictelier.git
 cd pictelier/deploy
 cp .env.example .env
 # Edit .env and set APP_SECRET, ADMIN_PASSWORD, and APP_DATA_DIR before starting.

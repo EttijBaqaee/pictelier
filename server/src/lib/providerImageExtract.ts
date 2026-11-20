@@ -1,9 +1,11 @@
 import { prepareImageOutput } from './imageOutput.js'
 import { fetchWithProviderProxy } from './upstreamFetch.js'
+import { readUpstreamCompletedAt } from './upstreamImageTime.js'
 
 export type GeneratedImageResult = {
   buffer: Buffer
   mimeType: string
+  upstreamCompletedAt?: number
 }
 
 export type ExtractedProviderImage = GeneratedImageResult & {
@@ -339,5 +341,8 @@ export async function parseProviderImageJsonResponse(response: Response, context
   if (!images.length) {
     throw new Error(`接口未返回图片数据：响应中缺少 b64_json/result（${context}；${summarizeResponseForError(json)}）`)
   }
-  return images.map(({ buffer, mimeType }) => prepareImageOutput({ buffer, mimeType }))
+  const upstreamCompletedAt = json && typeof json === 'object' && 'completed_at' in json
+    ? readUpstreamCompletedAt(json.completed_at, 'seconds')
+    : undefined
+  return images.map(({ buffer, mimeType }) => prepareImageOutput({ buffer, mimeType, upstreamCompletedAt }))
 }

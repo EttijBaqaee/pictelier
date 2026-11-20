@@ -10,7 +10,7 @@ import { executeWaveSpeedImageTask } from './wavespeedApi.js'
 import { executeKieImageTask } from './kieApi.js'
 import { fetchWithProviderProxy } from './upstreamFetch.js'
 import { resolveAdminGatedResolution } from './specialProviderQuality.js'
-import { isImagesOnlyModel, parseProviderImageJsonResponse } from './providerImageExtract.js'
+import { isImagesOnlyModel, parseProviderImageJsonResponse, type GeneratedImageResult } from './providerImageExtract.js'
 import { resolveEffectiveMaxReferenceImages } from './maxReferenceImages.js'
 import { getGrokBlankReferencePng } from './grokBlankReference.js'
 
@@ -38,10 +38,7 @@ export interface TaskExecutionPayload {
   maskImage?: TaskImageInput | null
 }
 
-export interface GeneratedImageResult {
-  buffer: Buffer
-  mimeType: string
-}
+export type { GeneratedImageResult } from './providerImageExtract.js'
 
 export interface ExecuteImageTaskOptions {
   publicReferenceImageUrl?: (image: TaskImageInput, matchReferenceUrl?: string) => string | Promise<string>
@@ -55,7 +52,7 @@ export interface ExecuteImageTaskOptions {
   /** 上游异步任务 ID（如 Kie taskId / WaveSpeed prediction id） */
   onUpstreamRequestId?: (requestId: string) => void
   /** 上游元数据（taskId / 结果 URL），用于失败后兼容恢复 */
-  onUpstreamMeta?: (meta: { requestId?: string; resultUrls?: string[] }) => void
+  onUpstreamMeta?: (meta: { requestId?: string; resultUrls?: string[]; upstreamCompletedAt?: number }) => void
 }
 
 function normalizeBase64Image(value: string) {
