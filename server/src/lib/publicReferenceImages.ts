@@ -2,7 +2,7 @@ import { normalizeReferenceImageMode, type ReferenceImageMode } from './referenc
 import { readOutgoingReference, referenceExtension, outgoingReferenceMime, type ReferenceDimensions } from './outgoingReferenceImages.js'
 import crypto from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { mkdir, open, opendir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
@@ -84,6 +84,67 @@ export function createPublicBlankReferenceUrl(config: Config, provider: Provider
 }
 
 type Variant = { filePath: string; mimeType: string; mode: ReferenceImageMode; seed: string; dimensions?: ReferenceDimensions }
+const variantRoutePattern = /^\.variants\/([a-f0-9-]{36})\/([a-f0-9-]{36}\.[a-z]+)$/
+const cachedVariantPattern = /^(\d+)-[a-f0-9-]{36}-[a-f0-9-]{36}\.[a-z]+(?:\.[a-f0-9-]{36}\.tmp)?$/
+const pendingVariants = new Map<string, Promise<void>>()
+
+function variantCacheDirectory(mediaDir: string) {
+  return path.join(mediaDir, '..', 'reference-cache')
+}
+
+async function ensureVariantFile(mediaDir: string, route: string, expires: number, variant: Variant) {
+  const routeParts = variantRoutePattern.exec(route)
+  if (!routeParts || !Number.isSafeInteger(expires)) throw new Error('Invalid variant cache key')
+  const directory = variantCacheDirectory(mediaDir)
+  const filePath = path.join(directory, `${expires}-${routeParts[1]}-${routeParts[2]}`)
+  let pending = pendingVariants.get(filePath)
+  if (!pending) {
+    pending = (async () => {
+      try {
+        if ((await stat(filePath)).isFile()) return
+        throw new Error('Invalid variant cache file')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      const result = await readOutgoingReference(
+        { filePath: path.join(mediaDir, variant.filePath), mimeType: variant.mimeType, dimensions: variant.dimensions },
+        variant.mode,
+        Buffer.from(variant.seed, 'hex'),
+      )
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const temporaryPath = `${filePath}.${crypto.randomUUID()}.tmp`
+      try {
+        await writeFile(temporaryPath, result.buffer, { flag: 'wx', mode: 0o600 })
+        await rename(temporaryPath, filePath)
+      } catch (error) {
+        await unlink(temporaryPath).catch(() => {})
+        throw error
+      }
+    })().finally(() => pendingVariants.delete(filePath))
+    pendingVariants.set(filePath, pending)
+  }
+  await pending
+  return filePath
+}
+
+async function cleanupExpiredVariants(mediaDir: string) {
+  const directory = variantCacheDirectory(mediaDir)
+  const entries = await opendir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (!entries) return
+  const now = Date.now()
+  for await (const entry of entries) {
+    if (!entry.isFile()) continue
+    const match = cachedVariantPattern.exec(entry.name)
+    if (!match || Number(match[1]) > now) continue
+    await unlink(path.join(directory, entry.name)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+  }
+}
+
 function variantKey(config: Config) {
   return crypto.createHash('sha256').update('public-reference-variant-v1\0').update(config.appSecret).digest()
 }
@@ -134,8 +195,8 @@ export async function preparePublicReferenceImageUrl(
     const route = decodeURIComponent(reference.pathname.slice(`${config.referenceBasePath}/references/`.length))
     if (!validReferenceSignature(config, reference, route, provider.id)) throw new Error('参考图链接无效或已过期')
     const variant = decodeVariant(config, route, reference.searchParams.get('ref_variant') || '')
-    const output = await readOutgoingReference({ filePath: path.join(config.mediaDir, variant.filePath), mimeType: variant.mimeType }, variant.mode, Buffer.from(variant.seed, 'hex'))
-    const [input, original] = await Promise.all([sharp(output.buffer).metadata(), sharp(path.join(config.mediaDir, variant.filePath)).metadata()])
+    const output = await ensureVariantFile(config.mediaDir, route, Number(reference.searchParams.get('ref_expires')), variant)
+    const [input, original] = await Promise.all([sharp(output).metadata(), sharp(path.join(config.mediaDir, variant.filePath)).metadata()])
     if (input.width !== original.width || input.height !== original.height) options = { ...options, dimensions: { width: input.width!, height: input.height! } }
   }
   const value = createPublicReferenceImageUrl(config, provider, filePath, options)
@@ -144,9 +205,8 @@ export async function preparePublicReferenceImageUrl(
   if (token) {
     const route = decodeURIComponent(url.pathname.slice(`${config.referenceBasePath}/references/`.length))
     const variant = decodeVariant(config, route, token)
-    // Validate the exact seeded bytes before the upstream can incur a charge.
-    // Do not retain buffers: downloads regenerate the same immutable variant.
-    await readOutgoingReference({ filePath: path.join(config.mediaDir, variant.filePath), mimeType: variant.mimeType, dimensions: variant.dimensions }, variant.mode, Buffer.from(variant.seed, 'hex'))
+    // Publish the complete variant before giving its URL to the provider.
+    await ensureVariantFile(config.mediaDir, route, Number(url.searchParams.get('ref_expires')), variant)
   } else {
     const file = await stat(path.join(config.mediaDir, filePath))
     if (!file.isFile()) throw new Error('参考图不存在')
@@ -174,9 +234,19 @@ export function canReadPublicReference(app: FastifyInstance, rawUrl: string, ima
 }
 
 export const publicReferenceRoutes: FastifyPluginAsync = async app => {
-  // Only coalesce in-flight reads. The source and transformation seed remain
-  // authoritative, and completed buffers are released rather than cached.
-  const pendingVariants = new Map<string, ReturnType<typeof readOutgoingReference>>()
+  let cleanup: Promise<void> | undefined
+  const cleanCache = () => {
+    cleanup ??= cleanupExpiredVariants(app.config.mediaDir)
+      .catch((error) => { app.log.warn({ err: error }, '清理过期公网参考图副本失败') })
+      .finally(() => { cleanup = undefined })
+    return cleanup
+  }
+  const cleanupTimer = setInterval(() => { void cleanCache() }, 5 * 60 * 1000).unref()
+  app.addHook('onReady', cleanCache)
+  app.addHook('onClose', async () => {
+    clearInterval(cleanupTimer)
+    await cleanup
+  })
   app.get(`${app.config.referenceBasePath}/references/.check/:nonce`, async (request, reply) => {
     const bytes = publicReferenceProbe(app.config, request.url)
     if (!bytes) return reply.code(404).send({ message: '检测图片不存在或已失效' })
@@ -193,7 +263,7 @@ export const publicReferenceRoutes: FastifyPluginAsync = async app => {
       if (!provider?.publicReferenceEnabled || !isPublicReferenceVerified(app.config, provider)) return reply.code(401).send({ message: '参考图链接无效或已过期' })
       return reply.header('X-Content-Type-Options', 'nosniff').type('image/png').send(await getGrokBlankReferencePng())
     }
-    if (/^\.variants\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.[a-z]+$/.test(relativePath)) {
+    if (variantRoutePattern.test(relativePath)) {
       const url = new URL(request.url, 'http://local')
       const providerId = url.searchParams.get('ref_provider') || ''
       if (!validReferenceSignature(app.config, url, relativePath, providerId)) return reply.code(401).send({ message: '参考图链接无效或已过期' })
@@ -203,22 +273,25 @@ export const publicReferenceRoutes: FastifyPluginAsync = async app => {
       const image = app.db.getTaskImageByFilePath(variant.filePath)
       const task = image ? app.db.getTask(image.taskId) : null
       const provider = app.db.getProviderProfile(providerId)
-      // The token carries the immutable mode and seed. Changing the profile's
-      // mode never invalidates a URL, including across a server restart.
+      // Authorize against the task and provider even when the copy is cached.
       if (!image || !['input', 'mask'].includes(image.kind) || task?.providerProfileId !== providerId || !provider?.publicReferenceEnabled || !isPublicReferenceVerified(app.config, provider) || image.mimeType !== variant.mimeType || image.kind === 'mask' && variant.mode === 'pixel') return reply.code(401).send({ message: '参考图链接无效或已过期' })
-      const key = relativePath + ':' + url.searchParams.get('ref_variant')
-      let pending = pendingVariants.get(key)
-      if (!pending) {
-        pending = readOutgoingReference({ filePath: path.join(app.config.mediaDir, variant.filePath), mimeType: variant.mimeType, dimensions: variant.dimensions }, variant.mode, Buffer.from(variant.seed, 'hex'))
-          .finally(() => { pendingVariants.delete(key) })
-        pendingVariants.set(key, pending)
-      }
-      const result = await pending.catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return null
+      // A URL issued by an older version may still need its first materialization.
+      const file = await ensureVariantFile(app.config.mediaDir, relativePath, Number(url.searchParams.get('ref_expires')), variant)
+        .then((filePath) => open(filePath, 'r'))
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null
+          throw error
+        })
+      if (!file) return reply.code(404).send({ message: '参考图不存在' })
+      const mimeType = variant.dimensions ? 'image/png' : outgoingReferenceMime(variant.mimeType, variant.mode)
+      try {
+        const { size } = await file.stat()
+        reply.header('Content-Length', size).header('X-Content-Type-Options', 'nosniff').type(mimeType)
+        return reply.send(file.createReadStream())
+      } catch (error) {
+        await file.close()
         throw error
-      })
-      if (!result) return reply.code(404).send({ message: '参考图不存在' })
-      return reply.header('Content-Length', result.buffer.length).header('X-Content-Type-Options', 'nosniff').type(result.mimeType).send(result.buffer)
+      }
     }
     if (!isReferenceFilePath(relativePath)) return reply.code(404).send({ message: '参考图不存在' })
     const image = app.db.getTaskImageByFilePath(relativePath)

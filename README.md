@@ -1,4 +1,4 @@
-# 绘坊 · Pictelier · 0.3.66.14
+# 绘坊 · Pictelier · 0.3.66.15
 
 [![简体中文](https://img.shields.io/badge/简体中文-当前页面-blue)](README.md) [![English](https://img.shields.io/badge/English-Readme-lightgrey)](README.en.md)
 
@@ -13,11 +13,21 @@
 
 **快速导航**
 
-- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-14) · [AI 脚本使用指南](agent.md)
+- **了解项目**：[界面预览](#section-1) · [更新说明](#release-0-3-66-15) · [AI 脚本使用指南](agent.md)
 - **部署**：[Docker](#section-2) · [1Panel](#section-5) · [离线镜像](#section-10)
 - **配置**：[编排文件](#section-3) · [环境变量](#section-4) · [端口与路径](#section-7) · [Nginx 反代](#section-8)
 - **维护**：[更新与备份](#section-11) · [常见问题](#section-12)
 - **项目条款**：[开源许可](#section-13) · [隐私政策](#section-14) · [免责声明](#section-15)
+
+<a id="release-0-3-66-15"></a>
+
+## 0.3.66.15 更新说明
+
+- **公网扰动参考图**：提交任务前生成并保存传输副本。上游下载或重试同一链接时直接读取这份副本，省去取图时的重复编码。
+- **副本有效期**：有效链接在服务重启后仍可读取。同一链接始终提供同一份副本，过期副本由服务器自动清理。
+
+<details>
+<summary>历史版本更新说明（0.3.66.14 及更早）</summary>
 
 <a id="release-0-3-66-14"></a>
 
@@ -25,9 +35,6 @@
 
 - **图片返回时间**：任务详情在创建时间和耗时下方显示当前输出图片保存到服务器的时间。任务有多张输出时，切换图片会显示对应的时间。
 - **上游完成时间**：上游明确返回完成时间时，任务详情会单独显示该时间。接口未提供或历史任务未记录时显示「无」。
-
-<details>
-<summary>历史版本更新说明（0.3.66.13 及更早）</summary>
 
 <a id="release-0-3-66-13"></a>
 
@@ -128,12 +135,12 @@
 服务器只需 Docker Engine 和 Docker Compose v2，可直接拉取绘坊的镜像，无需安装 Node.js 或在宿主机编译：
 
 ```bash
-docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.14
+docker pull ghcr.io/ettijbaqaee/pictelier:0.3.66.15
 # 跟随绘坊的最新发布版本
 docker pull ghcr.io/ettijbaqaee/pictelier:latest
 ```
 
-正式部署建议固定 `0.3.66.14`。本次发布镜像为 **Linux amd64**，应用使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
+正式部署建议固定 `0.3.66.15`。本次发布镜像为 **Linux amd64**，应用使用 UID/GID 1000。GHCR 镜像与 Release 离线镜像使用相同应用内容，不是另行编译的版本。
 
 ### 持久化数据目录
 
@@ -146,12 +153,12 @@ docker pull ghcr.io/ettijbaqaee/pictelier:latest
 只有需要自行构建时才需要 Git，以及访问基础镜像、npm 和 Debian 软件源：
 
 ```bash
-git clone --branch v0.3.66.14 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
+git clone --branch v0.3.66.15 https://github.com/EttijBaqaee/pictelier.git /opt/pictelier
 cd /opt/pictelier/deploy
 cp .env.example .env
 ```
 
-也可以从 [0.3.66.14 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.14) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
+也可以从 [0.3.66.15 Release](https://github.com/EttijBaqaee/pictelier/releases/tag/v0.3.66.15) 下载源码包并解压；`APP_SOURCE_DIR` 应指向含 `package.json`、`server/` 和 `deploy/` 的源码根目录。
 
 标准源码构建使用 `deploy/Dockerfile`，依赖安装、前端编译和后端编译都在 Docker 内完成。`deploy/Dockerfile.1panel` 是已有 Linux 锁定依赖缓存环境的构建文件，不能直接用于没有 `node_modules` 的干净源码；首次部署请使用标准 `deploy/Dockerfile`。
 
@@ -172,7 +179,7 @@ name: pictelier # 可选：编排项目名；同一服务器部署多套时使�
 services:
   app:
     # 镜像：推荐固定此版本；可按需改为绘坊的其他已发布标签。
-    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.14
+    image: ghcr.io/ettijbaqaee/pictelier:0.3.66.15
     # 可选：本机没有镜像时才拉取；升级时主动执行 docker compose pull app。
     pull_policy: if_not_present
     container_name: pictelier # 可选：容器名；部署多套时必须各不相同。
@@ -314,6 +321,7 @@ UPLOAD_MAX_TOTAL_MB=128
 - 检测由应用后端通过所填地址读取本次随机生成的临时图片，最多等待 10 秒，并核对图片内容；不调用供应商 API。公网地址、参考图路径反代、签名查询参数或额外登录有误时无法通过。更换公网地址、重新开启开关或更换 `REFERENCE_BASE_PATH` 后需要重新检测；它验证当前服务器能通过该地址访问图片，不能保证供应商所在网络也允许访问。
 - 浏览器能访问，但检测仍超时时，请检查应用容器能否回访所填公网地址和端口。防火墙、Docker 桥接网络或路由器不支持 NAT 回环时，容器可能无法访问自身映射端口；应调整回访网络或使用容器可回访的 Nginx 反代入口，再重新检测。HTTP 地址不需要证书。
 - 临时链接在任务实际执行时生成，至少有效 1 小时；长请求按“两倍节点请求超时加 60 秒”延长。过期后重新提交任务会获得新链接。签名仅允许读取该节点任务的指定输入图片或遮罩，其他媒体继续要求登录；关闭节点的公网 URL 开关即可使该节点旧链接失效。
+- 启用扰动时，传输副本在提交前保存到数据目录的 `reference-cache/`，上游用同一链接重试时直接读取。副本在链接过期后由后台清理。
 
 使用 Nginx 时，参考图反代必须保留完整前缀和查询参数，不应对该路径额外添加 Basic Auth 或网页登录。它只接受指定输入图片或遮罩的临时签名链接；原有媒体路径仍要求登录，不能把 `references` 改写为 `media`：
 
@@ -346,7 +354,7 @@ location ^~ /r/references/ {
 
 1. 确定专用持久化目录；留空 `APP_DATA_DIR` 时使用编排项目内的 `./docker-data`，首次启动会自动创建并准备写权限。
 2. 进入 **容器 → 编排 → 创建编排**，选择编辑编排，名称填写 `pictelier`。
-3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.14`。
+3. 粘贴第 2 节完整 YAML，使用 `ghcr.io/ettijbaqaee/pictelier:0.3.66.15`。
 4. 在编排环境变量中填写第 3 节参数，替换 `APP_SECRET` 和 `ADMIN_PASSWORD`。`APP_DATA_DIR` 可留空使用项目内默认目录，也可填写实际数据目录的绝对路径。六项路径按第 6 节分别填写或留空。
 5. 创建并启动，面板会拉取镜像并创建容器，不需要下载源码或现场编译。
 6. 容器健康状态变为 `healthy` 后，按 `APP_PORT` 和 `APP_BASE_PATH` 访问。推荐再按第 7 节配置 Nginx/HTTPS。
@@ -356,7 +364,7 @@ location ^~ /r/references/ {
 下载源码到服务器（例如 `/opt/pictelier`），在环境变量中设置 `APP_SOURCE_DIR=/opt/pictelier`，并把主编排中的 `image` / `pull_policy` 改为下面内容，同时加入 `build`：
 
 ```yaml
-image: pictelier:0.3.66.14
+image: pictelier:0.3.66.15
 pull_policy: never
 build:
   context: ${APP_SOURCE_DIR}
@@ -393,7 +401,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml build app
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
-该模式使用本地镜像名 `pictelier:0.3.66.14`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
+该模式使用本地镜像名 `pictelier:0.3.66.15`，不向 GHCR 上传。之后修改环境变量时仍使用相同两个 `-f` 文件。依赖安装和前后端编译均在 Docker 内完成，不需要在宿主机执行 `npm install` 或 `npm run build`。
 
 <a id="section-7"></a>
 
@@ -744,17 +752,17 @@ nginx -t && nginx -s reload
 
 ## 9. 离线镜像（可选）
 
-Release 中的 `pictelier-0.3.66.14-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
+Release 中的 `pictelier-0.3.66.15-amd64.tar.gz` 是 **Linux amd64** 镜像，不适用于 ARM 主机；ARM 主机请使用源码 Docker 构建。
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
-docker load -i pictelier-0.3.66.14-amd64.tar.gz
+docker load -i pictelier-0.3.66.15-amd64.tar.gz
 ```
 
 使用离线镜像时，将主编排的 `image` 和 `pull_policy` 改为下面内容；如果之前添加过 `build`，同时删除整个 `build` 块：
 
 ```yaml
-image: pictelier:0.3.66.14
+image: pictelier:0.3.66.15
 pull_policy: never
 ```
 
